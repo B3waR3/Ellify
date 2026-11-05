@@ -4,6 +4,7 @@ import * as db from './db'
 import * as secure from './secure'
 import * as files from './files'
 import * as ai from './ai'
+import { checkForUpdates } from './updates'
 import type { ConceptStatus, ExamConfig, McQuestion } from './types'
 
 let mainWindow: BrowserWindow | null = null
@@ -48,6 +49,7 @@ app.whenReady().then(async () => {
     }).show()
   }
   createWindow()
+  void checkForUpdates(mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
