@@ -24,7 +24,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - run: npm install
 
       - name: Build a universal disk image
         run: npm run build && npx electron-builder --mac --universal
