@@ -35,8 +35,10 @@ export default function NotebookView({ settings, onChanged }: Props) {
   const [editingNotebookName, setEditingNotebookName] = useState(false)
   const [notebookNameDraft, setNotebookNameDraft] = useState('')
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
+  const [openChapterId, setOpenChapterId] = useState<string | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
   const dragging = useRef(false)
+  const pendingClick = useRef<number | null>(null)
 
   const activePage = useMemo(() => {
     for (const pages of Object.values(pagesByChapter)) {
@@ -71,6 +73,23 @@ export default function NotebookView({ settings, onChanged }: Props) {
   useEffect(() => {
     refreshTree().catch(console.error)
   }, [refreshTree])
+
+  useEffect(() => {
+    setOpenChapterId(null)
+    setEditTarget(null)
+  }, [id])
+
+  useEffect(() => {
+    if (openChapterId && !chapters.some((chapter) => chapter.id === openChapterId)) {
+      setOpenChapterId(null)
+    }
+  }, [chapters, openChapterId])
+
+  useEffect(() => {
+    return () => {
+      if (pendingClick.current !== null) window.clearTimeout(pendingClick.current)
+    }
+  }, [])
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -163,6 +182,7 @@ export default function NotebookView({ settings, onChanged }: Props) {
       const page = await ella().pages.create(ch.id, 'עמוד 1')
       setEditTarget(null)
       await refreshTree()
+      setOpenChapterId(ch.id)
       setActivePageId(page.id)
       return
     }
@@ -180,6 +200,25 @@ export default function NotebookView({ settings, onChanged }: Props) {
   }
 
   const cancelEdit = () => setEditTarget(null)
+
+  const runAfterSingleClick = (action: () => void) => {
+    if (pendingClick.current !== null) window.clearTimeout(pendingClick.current)
+    pendingClick.current = window.setTimeout(() => {
+      pendingClick.current = null
+      action()
+    }, 400)
+  }
+
+  const consumeDoubleClick = (action: () => void) => {
+    if (pendingClick.current !== null) {
+      window.clearTimeout(pendingClick.current)
+      pendingClick.current = null
+    }
+    action()
+  }
+
+  const openChapter = chapters.find((chapter) => chapter.id === openChapterId) ?? null
+  const openPages = openChapter ? pagesByChapter[openChapter.id] || [] : []
 
   const deleteChapter = async (chapter: Chapter) => {
     const pageCount = (pagesByChapter[chapter.id] || []).length
@@ -312,29 +351,19 @@ export default function NotebookView({ settings, onChanged }: Props) {
       {tab === 'notes' && (
         <div className="notebook-layout notebook-layout-fill notebook-layout-resize">
           <aside className="sidebar sidebar-fill" style={{ width: sidebarWidth, flex: `0 0 ${sidebarWidth}px` }}>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ width: '100%' }}
-              onClick={() => setEditTarget({ kind: 'new-chapter', value: 'פרק חדש' })}
-            >
-              + פרק
-            </button>
+            {openChapter ? (
+              <>
+                <button
+                  type="button"
+                  className="sidebar-back"
+                  onClick={() => setOpenChapterId(null)}
+                >
+                  <span aria-hidden="true">→</span>
+                  <span>חזרה לפרקים</span>
+                </button>
 
-            {editTarget?.kind === 'new-chapter' && (
-              <InlineNameInput
-                value={editTarget.value}
-                onChange={(value) => setEditTarget({ ...editTarget, value })}
-                onCommit={() => void commitEdit()}
-                onCancel={cancelEdit}
-                placeholder="שם הפרק"
-              />
-            )}
-
-            {chapters.map((ch) => (
-              <div key={ch.id} className="sidebar-chapter-block">
                 <div className="sidebar-chapter-row">
-                  {editTarget?.kind === 'chapter' && editTarget.id === ch.id ? (
+                  {editTarget?.kind === 'chapter' && editTarget.id === openChapter.id ? (
                     <InlineNameInput
                       value={editTarget.value}
                       onChange={(value) => setEditTarget({ ...editTarget, value })}
@@ -344,26 +373,20 @@ export default function NotebookView({ settings, onChanged }: Props) {
                     />
                   ) : (
                     <>
-                      <h3 className="sidebar-chapter-title">{ch.title}</h3>
-                      <button
-                        type="button"
-                        className="sidebar-edit-btn"
-                        title="שינוי שם פרק"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setEditTarget({ kind: 'chapter', id: ch.id, value: ch.title })
-                        }}
+                      <h3
+                        className="sidebar-chapter-title"
+                        title="לחיצה כפולה לשינוי שם"
+                        onDoubleClick={() =>
+                          setEditTarget({ kind: 'chapter', id: openChapter.id, value: openChapter.title })
+                        }
                       >
-                        ✎
-                      </button>
+                        {openChapter.title}
+                      </h3>
                       <button
                         type="button"
                         className="sidebar-edit-btn sidebar-delete-btn"
                         title="מחיקת פרק"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          void deleteChapter(ch)
-                        }}
+                        onClick={() => void deleteChapter(openChapter)}
                       >
                         ×
                       </button>
@@ -371,7 +394,7 @@ export default function NotebookView({ settings, onChanged }: Props) {
                   )}
                 </div>
 
-                {(pagesByChapter[ch.id] || []).map((p) => (
+                {openPages.map((p) => (
                   <div key={p.id} className="sidebar-page-row">
                     {editTarget?.kind === 'page' && editTarget.id === p.id ? (
                       <InlineNameInput
@@ -385,26 +408,22 @@ export default function NotebookView({ settings, onChanged }: Props) {
                       <>
                         <button
                           type="button"
-                          className={`sidebar-item page-item ${activePageId === p.id ? 'active' : ''}`}
-                          onClick={() => setActivePageId(p.id)}
+                          className={`sidebar-item sidebar-nav-btn ${activePageId === p.id ? 'active' : ''}`}
+                          title="לחיצה כפולה לשינוי שם"
+                          aria-current={activePageId === p.id ? 'page' : undefined}
+                          onClick={() => runAfterSingleClick(() => setActivePageId(p.id))}
+                          onDoubleClick={() =>
+                            consumeDoubleClick(() =>
+                              setEditTarget({
+                                kind: 'page',
+                                id: p.id,
+                                chapterId: openChapter.id,
+                                value: p.title,
+                              }),
+                            )
+                          }
                         >
                           {p.title}
-                        </button>
-                        <button
-                          type="button"
-                          className="sidebar-edit-btn"
-                          title="שינוי שם עמוד"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditTarget({
-                              kind: 'page',
-                              id: p.id,
-                              chapterId: ch.id,
-                              value: p.title,
-                            })
-                          }}
-                        >
-                          ✎
                         </button>
                         <button
                           type="button"
@@ -422,7 +441,7 @@ export default function NotebookView({ settings, onChanged }: Props) {
                   </div>
                 ))}
 
-                {editTarget?.kind === 'new-page' && editTarget.chapterId === ch.id ? (
+                {editTarget?.kind === 'new-page' && editTarget.chapterId === openChapter.id ? (
                   <InlineNameInput
                     value={editTarget.value}
                     onChange={(value) => setEditTarget({ ...editTarget, value })}
@@ -433,16 +452,83 @@ export default function NotebookView({ settings, onChanged }: Props) {
                 ) : (
                   <button
                     type="button"
-                    className="sidebar-item page-item add-page-btn"
+                    className="sidebar-item add-page-btn"
                     onClick={() =>
-                      setEditTarget({ kind: 'new-page', chapterId: ch.id, value: 'עמוד חדש' })
+                      setEditTarget({ kind: 'new-page', chapterId: openChapter.id, value: 'עמוד חדש' })
                     }
                   >
                     + עמוד
                   </button>
                 )}
-              </div>
-            ))}
+              </>
+            ) : (
+              <>
+                <p className="sidebar-view-label">פרקים</p>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ width: '100%' }}
+                  onClick={() => setEditTarget({ kind: 'new-chapter', value: 'פרק חדש' })}
+                >
+                  + פרק
+                </button>
+
+                {editTarget?.kind === 'new-chapter' && (
+                  <InlineNameInput
+                    value={editTarget.value}
+                    onChange={(value) => setEditTarget({ ...editTarget, value })}
+                    onCommit={() => void commitEdit()}
+                    onCancel={cancelEdit}
+                    placeholder="שם הפרק"
+                  />
+                )}
+
+                {chapters.map((ch) => {
+                  const selected = activePage?.chapter_id === ch.id
+                  return (
+                    <div key={ch.id} className="sidebar-chapter-row">
+                      {editTarget?.kind === 'chapter' && editTarget.id === ch.id ? (
+                        <InlineNameInput
+                          value={editTarget.value}
+                          onChange={(value) => setEditTarget({ ...editTarget, value })}
+                          onCommit={() => void commitEdit()}
+                          onCancel={cancelEdit}
+                          placeholder="שם הפרק"
+                        />
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className={`sidebar-item sidebar-nav-btn ${selected ? 'active' : ''}`}
+                            title="לחיצה כפולה לשינוי שם"
+                            aria-current={selected ? 'true' : undefined}
+                            onClick={() => runAfterSingleClick(() => setOpenChapterId(ch.id))}
+                            onDoubleClick={() =>
+                              consumeDoubleClick(() =>
+                                setEditTarget({ kind: 'chapter', id: ch.id, value: ch.title }),
+                              )
+                            }
+                          >
+                            {ch.title}
+                          </button>
+                          <button
+                            type="button"
+                            className="sidebar-edit-btn sidebar-delete-btn"
+                            title="מחיקת פרק"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void deleteChapter(ch)
+                            }}
+                          >
+                            ×
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
+              </>
+            )}
           </aside>
 
           <div
@@ -492,6 +578,14 @@ function InlineNameInput({
   onCancel: () => void
   placeholder: string
 }) {
+  const settled = useRef(false)
+  const settle = (save: boolean) => {
+    if (settled.current) return
+    settled.current = true
+    if (save) onCommit()
+    else onCancel()
+  }
+
   return (
     <div className="inline-name-row">
       <input
@@ -501,17 +595,18 @@ function InlineNameInput({
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault()
-            onCommit()
+            settle(true)
           }
           if (e.key === 'Escape') {
             e.preventDefault()
-            onCancel()
+            settle(false)
           }
         }}
-        onBlur={() => onCommit()}
+        onBlur={() => settle(true)}
       />
     </div>
   )
