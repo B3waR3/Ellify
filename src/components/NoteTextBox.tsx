@@ -1,7 +1,12 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react'
 import type { CanvasTextElement, TipTapDoc } from '../lib/canvasDocument'
-import { isEmptyTipTapDoc, MIN_TEXT_WIDTH, MAX_TEXT_WIDTH } from '../lib/canvasDocument'
+import {
+  isEmptyTipTapDoc,
+  MIN_TEXT_HEIGHT,
+  MIN_TEXT_WIDTH,
+  MAX_TEXT_WIDTH,
+} from '../lib/canvasDocument'
 import { NOTE_EDITOR_EXTENSIONS } from '../lib/tiptapExtensions'
 
 type Props = {
@@ -30,6 +35,7 @@ export default function NoteTextBox({
   onEditorDestroy,
   onEmptyBlur,
 }: Props) {
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
   const resizeRef = useRef<{ startX: number; origWidth: number } | null>(null)
   const typedRef = useRef(!isEmptyTipTapDoc(element.content))
@@ -139,19 +145,32 @@ export default function NoteTextBox({
     document.body.style.cursor = 'ew-resize'
   }
 
+  const activateFromBox = (event: React.MouseEvent<HTMLDivElement>) => {
+    // Stop the canvas from treating this as an empty-page click.
+    event.stopPropagation()
+    onActivate(element.id)
+
+    const target = event.target as HTMLElement | null
+    const clickedEditor = !!target?.closest?.('.ProseMirror')
+    const clickedChrome = !!target?.closest?.('.note-box-drag, .note-box-resize')
+    if (!clickedEditor && !clickedChrome && editor) {
+      // Padding / empty box area: select this container and place the caret.
+      editor.commands.focus(editor.state.selection.to)
+    }
+  }
+
   return (
     <div
+      ref={rootRef}
       className={`note-box ${active ? 'is-active' : ''}`}
       style={{
         top: element.y,
         insetInlineStart: element.x,
-        width: element.width,
+        width: Math.max(MIN_TEXT_WIDTH, element.width),
+        minHeight: MIN_TEXT_HEIGHT,
         zIndex: active ? element.zIndex + 1000 : element.zIndex,
       }}
-      onMouseDown={(event) => {
-        event.stopPropagation()
-        onActivate(element.id)
-      }}
+      onMouseDown={activateFromBox}
     >
       {active && (
         <>
@@ -171,7 +190,7 @@ export default function NoteTextBox({
           />
         </>
       )}
-      <EditorContent editor={editor} />
+      <EditorContent editor={editor} className="note-box-content" />
     </div>
   )
 }

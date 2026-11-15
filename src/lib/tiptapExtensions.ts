@@ -71,7 +71,65 @@ export const NOTE_EDITOR_EXTENSIONS = [
   FontFamily,
   FontSize,
   Highlight.configure({ multicolor: true }),
-  TextAlign.configure({
+  // TipTap 2.27 TextAlign uses .every() across node types, so setTextAlign fails
+  // when the cursor is only in a paragraph (heading update returns false).
+  TextAlign.extend({
+    addCommands() {
+      return {
+        setTextAlign:
+          (alignment: string) =>
+          ({ commands }) => {
+            if (!this.options.alignments.includes(alignment)) return false
+            return this.options.types
+              .map((type: string) => commands.updateAttributes(type, { textAlign: alignment }))
+              .some((response: boolean) => response)
+          },
+        unsetTextAlign:
+          () =>
+          ({ commands }) =>
+            this.options.types
+              .map((type: string) => commands.resetAttributes(type, 'textAlign'))
+              .some((response: boolean) => response),
+        toggleTextAlign:
+          (alignment: string) =>
+          ({ editor, commands }) => {
+            if (!this.options.alignments.includes(alignment)) return false
+            if (editor.isActive({ textAlign: alignment })) {
+              return commands.unsetTextAlign()
+            }
+            return commands.setTextAlign(alignment)
+          },
+      }
+    },
+    addGlobalAttributes() {
+      return [
+        {
+          types: this.options.types,
+          attributes: {
+            textAlign: {
+              default: this.options.defaultAlignment,
+              parseHTML: (element: HTMLElement) => {
+                const alignment = element.style.textAlign
+                return this.options.alignments.includes(alignment)
+                  ? alignment
+                  : this.options.defaultAlignment
+              },
+              renderHTML: (attributes: { textAlign?: string | null }) => {
+                if (!attributes.textAlign) return {}
+                // Last line follows writing direction (right in RTL Hebrew).
+                if (attributes.textAlign === 'justify') {
+                  return {
+                    style: 'text-align: justify; text-align-last: start',
+                  }
+                }
+                return { style: `text-align: ${attributes.textAlign}` }
+              },
+            },
+          },
+        },
+      ]
+    },
+  }).configure({
     types: ['heading', 'paragraph'],
     alignments: ['right', 'center', 'left', 'justify'],
     defaultAlignment: 'right',
@@ -91,3 +149,21 @@ export const FONT_FAMILIES = [
 ]
 
 export const FONT_SIZES = ['12px', '14px', '16px', '18px', '20px', '24px', '28px', '32px']
+
+/** Normalize browser/CSS font-family strings so toolbar <select> values match. */
+export function matchFontFamily(value: string | undefined | null): string {
+  if (!value) return ''
+  const compact = value.replace(/['"]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
+  const exact = FONT_FAMILIES.find((font) => font.value.replace(/['"]/g, '').toLowerCase() === compact)
+  if (exact) return exact.value
+  const byLabel = FONT_FAMILIES.find((font) => compact.startsWith(font.label.toLowerCase()))
+  return byLabel?.value || ''
+}
+
+export function matchFontSize(value: string | undefined | null): string {
+  if (!value) return ''
+  const normalized = value.trim().toLowerCase()
+  if (FONT_SIZES.includes(normalized)) return normalized
+  const withPx = /^\d+$/.test(normalized) ? `${normalized}px` : normalized
+  return FONT_SIZES.includes(withPx) ? withPx : ''
+}

@@ -29,6 +29,13 @@ type DragState = {
   corner?: ResizeCorner
 }
 
+type VisualFrame = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export default function NoteImageBox({
   element,
   active,
@@ -39,8 +46,91 @@ export default function NoteImageBox({
 }: Props) {
   const [src, setSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const boxRef = useRef<HTMLDivElement | null>(null)
   const objectUrlRef = useRef<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
+  const visualRef = useRef<VisualFrame>({
+    x: element.x,
+    y: element.y,
+    width: element.width,
+    height: element.height,
+  })
+  const interactingRef = useRef(false)
+  const rafRef = useRef<number | null>(null)
+  const pendingPaintRef = useRef(false)
+  const onChangeFrameRef = useRef(onChangeFrame)
+
+  useEffect(() => {
+    onChangeFrameRef.current = onChangeFrame
+  }, [onChangeFrame])
+
+  const paintFrame = (frame: VisualFrame, kind: 'move' | 'resize' | 'idle') => {
+    const box = boxRef.current
+    if (!box) return
+
+    if (kind === 'move') {
+      const drag = dragRef.current
+      const originX = drag?.origX ?? frame.x
+      const originY = drag?.origY ?? frame.y
+      // inset-inline-start grows toward inline start (left in RTL). CSS
+      // translateX is physical (positive = right), so invert the X delta.
+      box.style.transform = `translate(${-(frame.x - originX)}px, ${frame.y - originY}px)`
+      box.style.top = `${originY}px`
+      box.style.insetInlineStart = `${originX}px`
+      box.style.width = `${frame.width}px`
+      box.style.height = `${frame.height}px`
+      return
+    }
+
+    box.style.transform = ''
+    box.style.willChange = ''
+    box.style.top = `${frame.y}px`
+    box.style.insetInlineStart = `${frame.x}px`
+    box.style.width = `${frame.width}px`
+    box.style.height = `${frame.height}px`
+  }
+
+  const schedulePaint = (kind: 'move' | 'resize') => {
+    if (pendingPaintRef.current) return
+    pendingPaintRef.current = true
+    rafRef.current = window.requestAnimationFrame(() => {
+      pendingPaintRef.current = false
+      rafRef.current = null
+      if (!dragRef.current) return
+      paintFrame(visualRef.current, kind)
+    })
+  }
+
+  const commitInteraction = () => {
+    if (!dragRef.current) return
+
+    if (rafRef.current !== null) {
+      window.cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+      pendingPaintRef.current = false
+    }
+
+    const frame = { ...visualRef.current }
+    interactingRef.current = false
+    dragRef.current = null
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+
+    // Bake final geometry into layout styles before React props catch up.
+    paintFrame(frame, 'idle')
+    onChangeFrameRef.current(element.id, frame)
+  }
+
+  useEffect(() => {
+    if (interactingRef.current) return
+    visualRef.current = {
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+    }
+    paintFrame(visualRef.current, 'idle')
+  }, [element.x, element.y, element.width, element.height])
 
   useEffect(() => {
     let cancelled = false
@@ -80,13 +170,17 @@ export default function NoteImageBox({
     const onMove = (event: PointerEvent) => {
       const drag = dragRef.current
       if (!drag) return
+
       if (drag.kind === 'move') {
         const dx = drag.startX - event.clientX
         const dy = event.clientY - drag.startY
-        onChangeFrame(element.id, {
+        visualRef.current = {
           x: Math.max(0, drag.origX + dx),
           y: Math.max(0, drag.origY + dy),
-        })
+          width: drag.origWidth,
+          height: drag.origHeight,
+        }
+        schedulePaint('move')
         return
       }
 
@@ -106,13 +200,18 @@ export default function NoteImageBox({
         MAX_IMAGE_SIZE,
         Math.max(MIN_IMAGE_SIZE, Math.round(nextWidth / drag.aspect)),
       )
-      onChangeFrame(element.id, { width: nextWidth, height: nextHeight })
+      visualRef.current = {
+        x: drag.origX,
+        y: drag.origY,
+        width: nextWidth,
+        height: nextHeight,
+      }
+      schedulePaint('resize')
     }
 
     const onUp = () => {
-      dragRef.current = null
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
+      if (!dragRef.current) return
+      commitInteraction()
     }
 
     window.addEventListener('pointermove', onMove)
@@ -120,8 +219,12 @@ export default function NoteImageBox({
     return () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
     }
-  }, [element.id, onChangeFrame])
+  }, [element.id])
 
   useEffect(() => {
     if (!active) return
@@ -139,30 +242,23 @@ export default function NoteImageBox({
     return () => window.removeEventListener('keydown', onKey)
   }, [active, element.id, onDelete])
 
-  const startMove = (event: ReactPointerEvent) => {
+  const beginInteraction = (
+    event: ReactPointerEvent,
+    kind: 'move' | 'resize',
+    corner?: ResizeCorner,
+  ) => {
     event.preventDefault()
     event.stopPropagation()
     onActivate(element.id)
-    dragRef.current = {
-      kind: 'move',
-      startX: event.clientX,
-      startY: event.clientY,
-      origX: element.x,
-      origY: element.y,
-      origWidth: element.width,
-      origHeight: element.height,
-      aspect: element.width / Math.max(1, element.height),
+    interactingRef.current = true
+    visualRef.current = {
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
     }
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'grabbing'
-  }
-
-  const startResize = (event: ReactPointerEvent, corner: ResizeCorner) => {
-    event.preventDefault()
-    event.stopPropagation()
-    onActivate(element.id)
     dragRef.current = {
-      kind: 'resize',
+      kind,
       startX: event.clientX,
       startY: event.clientY,
       origX: element.x,
@@ -172,12 +268,25 @@ export default function NoteImageBox({
       aspect: element.width / Math.max(1, element.height),
       corner,
     }
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      // Some targets (e.g. buttons) may already manage capture; window listeners still work.
+    }
     document.body.style.userSelect = 'none'
-    document.body.style.cursor = corner === 'ne' || corner === 'sw' ? 'nesw-resize' : 'nwse-resize'
+    if (kind === 'move') {
+      document.body.style.cursor = 'grabbing'
+      if (boxRef.current) boxRef.current.style.willChange = 'transform'
+    } else {
+      document.body.style.cursor =
+        corner === 'ne' || corner === 'sw' ? 'nesw-resize' : 'nwse-resize'
+      if (boxRef.current) boxRef.current.style.willChange = 'width, height'
+    }
   }
 
   return (
     <div
+      ref={boxRef}
       className={`note-image-box ${active ? 'is-active' : ''}`}
       style={{
         top: element.y,
@@ -198,7 +307,7 @@ export default function NoteImageBox({
           alt=""
           draggable={false}
           className="note-image"
-          onPointerDown={startMove}
+          onPointerDown={(event) => beginInteraction(event, 'move')}
         />
       )}
       {active && (
@@ -220,28 +329,28 @@ export default function NoteImageBox({
             className="note-image-handle note-image-handle-se"
             title="שני גודל"
             aria-label="שינוי גודל תמונה"
-            onPointerDown={(event) => startResize(event, 'se')}
+            onPointerDown={(event) => beginInteraction(event, 'resize', 'se')}
           />
           <button
             type="button"
             className="note-image-handle note-image-handle-sw"
             title="שני גודל"
             aria-label="שינוי גודל תמונה"
-            onPointerDown={(event) => startResize(event, 'sw')}
+            onPointerDown={(event) => beginInteraction(event, 'resize', 'sw')}
           />
           <button
             type="button"
             className="note-image-handle note-image-handle-ne"
             title="שני גודל"
             aria-label="שינוי גודל תמונה"
-            onPointerDown={(event) => startResize(event, 'ne')}
+            onPointerDown={(event) => beginInteraction(event, 'resize', 'ne')}
           />
           <button
             type="button"
             className="note-image-handle note-image-handle-nw"
             title="שני גודל"
             aria-label="שינוי גודל תמונה"
-            onPointerDown={(event) => startResize(event, 'nw')}
+            onPointerDown={(event) => beginInteraction(event, 'resize', 'nw')}
           />
         </>
       )}

@@ -34,7 +34,8 @@ export type CanvasPageDocument = {
 }
 
 export const DEFAULT_TEXT_WIDTH = 320
-export const MIN_TEXT_WIDTH = 160
+export const MIN_TEXT_WIDTH = 180
+export const MIN_TEXT_HEIGHT = 48
 export const MAX_TEXT_WIDTH = 900
 export const DEFAULT_IMAGE_WIDTH = 280
 export const MIN_IMAGE_SIZE = 64

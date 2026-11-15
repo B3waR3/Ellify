@@ -25,7 +25,11 @@ import {
   Underline as UnderlineIcon,
 } from 'lucide-react'
 import { ella } from '../lib/api'
-import { PAGE_COLORS } from '../lib/colors'
+import {
+  HIGHLIGHT_COLOR_PRESETS,
+  PAGE_COLORS,
+  TEXT_COLOR_PRESETS,
+} from '../lib/colors'
 import NoteTextBox from './NoteTextBox'
 import NoteImageBox from './NoteImageBox'
 import {
@@ -41,7 +45,12 @@ import {
   type CanvasPageDocument,
   type TipTapDoc,
 } from '../lib/canvasDocument'
-import { FONT_FAMILIES, FONT_SIZES } from '../lib/tiptapExtensions'
+import {
+  FONT_FAMILIES,
+  FONT_SIZES,
+  matchFontFamily,
+  matchFontSize,
+} from '../lib/tiptapExtensions'
 import { imageRejectionMessage, MAX_MEDIA_BYTES } from '../lib/mediaLimits'
 
 type AssistAction = 'explain' | 'summarize' | 'simplify' | 'expand' | 'questions'
@@ -85,6 +94,7 @@ export default function NotesEditor({
   const docRef = useRef(doc)
   const suppressCreateRef = useRef(false)
   const activeIdRef = useRef<string | null>(null)
+  const savedTextSelectionRef = useRef<{ from: number; to: number } | null>(null)
 
   useEffect(() => {
     docRef.current = doc
@@ -267,6 +277,31 @@ export default function NotesEditor({
     setEditorVersion((value) => value + 1)
   }
 
+  const rememberTextSelection = () => {
+    if (!activeEditor) {
+      savedTextSelectionRef.current = null
+      return
+    }
+    const { from, to } = activeEditor.state.selection
+    savedTextSelectionRef.current = { from, to }
+  }
+
+  /** Apply a mark/command while restoring the selection lost when focusing a <select>. */
+  const runTextStyle = (apply: (chain: ReturnType<Editor['chain']>) => void) => {
+    if (!activeEditor) return
+    const saved = savedTextSelectionRef.current
+    const { doc } = activeEditor.state
+    let chain = activeEditor.chain().focus()
+    if (saved) {
+      const from = Math.max(1, Math.min(saved.from, doc.content.size))
+      const to = Math.max(from, Math.min(saved.to, doc.content.size))
+      chain = chain.setTextSelection({ from, to })
+    }
+    apply(chain)
+    activeEditor.view.focus()
+    setEditorVersion((value) => value + 1)
+  }
+
   const assist = async (action: AssistAction) => {
     if (!activeEditor || !notebookId) return
     const { from, to } = activeEditor.state.selection
@@ -350,10 +385,12 @@ export default function NotesEditor({
   const surfaceHeight = useMemo(() => canvasHeightFor(doc.elements), [doc.elements])
   void editorVersion
 
-  const currentFontFamily =
-    (activeEditor?.getAttributes('textStyle').fontFamily as string | undefined) || ''
-  const currentFontSize =
-    (activeEditor?.getAttributes('textStyle').fontSize as string | undefined) || ''
+  const currentFontFamily = matchFontFamily(
+    activeEditor?.getAttributes('textStyle').fontFamily as string | undefined,
+  )
+  const currentFontSize = matchFontSize(
+    activeEditor?.getAttributes('textStyle').fontSize as string | undefined,
+  )
 
   const modifiedLabel = formatUpdatedAt(updatedAt)
 
@@ -379,12 +416,12 @@ export default function NotesEditor({
             disabled={!activeEditor}
             value={currentFontFamily}
             title="גופן"
-            onMouseDown={keepSelection}
+            onMouseDown={rememberTextSelection}
             onChange={(e) => {
               const value = e.target.value
-              run((editor) => {
-                if (!value) editor.chain().focus().unsetFontFamily().run()
-                else editor.chain().focus().setFontFamily(value).run()
+              runTextStyle((chain) => {
+                if (!value) chain.unsetFontFamily().run()
+                else chain.setFontFamily(value).run()
               })
             }}
           >
@@ -400,12 +437,12 @@ export default function NotesEditor({
             disabled={!activeEditor}
             value={currentFontSize}
             title="גודל גופן"
-            onMouseDown={keepSelection}
+            onMouseDown={rememberTextSelection}
             onChange={(e) => {
               const value = e.target.value
-              run((editor) => {
-                if (!value) editor.chain().focus().unsetFontSize().run()
-                else editor.chain().focus().setFontSize(value).run()
+              runTextStyle((chain) => {
+                if (!value) chain.unsetFontSize().run()
+                else chain.setFontSize(value).run()
               })
             }}
           >
@@ -458,45 +495,44 @@ export default function NotesEditor({
         <span className="format-sep" aria-hidden="true" />
 
         <div className="format-group" aria-label="צבע והדגשה">
-          <label
-            className={`format-icon format-color ${!activeEditor ? 'is-disabled' : ''}`}
-            title="צבע טקסט"
-            onMouseDown={keepSelection}
-          >
-            <span className="format-color-letter" style={{ borderBottomColor: textColor }}>
-              A
-            </span>
-            <input
-              type="color"
-              value={textColor}
-              disabled={!activeEditor}
-              onChange={(e) => {
-                const value = e.target.value
-                setTextColor(value)
-                run((editor) => editor.chain().focus().setColor(value).run())
-              }}
-            />
-          </label>
-          <label
-            className={`format-icon format-color ${!activeEditor ? 'is-disabled' : ''} ${
-              activeEditor?.isActive('highlight') ? 'is-active' : ''
-            }`}
-            title="הדגשת רקע"
-            onMouseDown={keepSelection}
-          >
-            <Highlighter size={16} strokeWidth={2.25} />
-            <span className="format-color-bar" style={{ background: highlightColor }} />
-            <input
-              type="color"
-              value={highlightColor}
-              disabled={!activeEditor}
-              onChange={(e) => {
-                const value = e.target.value
-                setHighlightColor(value)
-                run((editor) => editor.chain().focus().toggleHighlight({ color: value }).run())
-              }}
-            />
-          </label>
+          <ColorSwatchMenu
+            kind="text"
+            disabled={!activeEditor}
+            currentColor={
+              (activeEditor?.getAttributes('textStyle').color as string | undefined) || textColor
+            }
+            active={!!activeEditor?.getAttributes('textStyle').color}
+            onPick={(color) => {
+              setTextColor(color)
+              run((editor) => editor.chain().focus().setColor(color).run())
+            }}
+            onPickCustom={(color) => {
+              setTextColor(color)
+              runTextStyle((chain) => chain.setColor(color).run())
+            }}
+            onRememberSelection={rememberTextSelection}
+          />
+          <ColorSwatchMenu
+            kind="highlight"
+            disabled={!activeEditor}
+            currentColor={
+              (activeEditor?.getAttributes('highlight').color as string | undefined) ||
+              highlightColor
+            }
+            active={!!activeEditor?.isActive('highlight')}
+            onPick={(color) => {
+              setHighlightColor(color)
+              run((editor) => editor.chain().focus().setHighlight({ color }).run())
+            }}
+            onClear={() => {
+              run((editor) => editor.chain().focus().unsetHighlight().run())
+            }}
+            onPickCustom={(color) => {
+              setHighlightColor(color)
+              runTextStyle((chain) => chain.setHighlight({ color }).run())
+            }}
+            onRememberSelection={rememberTextSelection}
+          />
         </div>
 
         <span className="format-sep" aria-hidden="true" />
@@ -699,6 +735,153 @@ export default function NotesEditor({
 
 function keepSelection(event: ReactMouseEvent) {
   event.preventDefault()
+}
+
+function ColorSwatchMenu({
+  kind,
+  disabled,
+  currentColor,
+  active,
+  onPick,
+  onClear,
+  onPickCustom,
+  onRememberSelection,
+}: {
+  kind: 'text' | 'highlight'
+  disabled?: boolean
+  currentColor: string
+  active?: boolean
+  onPick: (color: string) => void
+  onClear?: () => void
+  onPickCustom: (color: string) => void
+  onRememberSelection: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const customInputRef = useRef<HTMLInputElement | null>(null)
+  const presets = kind === 'text' ? TEXT_COLOR_PRESETS : HIGHLIGHT_COLOR_PRESETS
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="format-color-menu" ref={rootRef}>
+      <button
+        type="button"
+        className={`format-icon format-color-trigger ${active ? 'is-active' : ''} ${
+          disabled ? 'is-disabled' : ''
+        }`}
+        title={kind === 'text' ? 'צבע טקסט' : 'הדגשת רקע'}
+        aria-label={kind === 'text' ? 'צבע טקסט' : 'הדגשת רקע'}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        disabled={disabled}
+        onMouseDown={keepSelection}
+        onClick={() => {
+          if (disabled) return
+          setOpen((value) => !value)
+        }}
+      >
+        {kind === 'text' ? (
+          <span className="format-color-letter" style={{ borderBottomColor: currentColor }}>
+            A
+          </span>
+        ) : (
+          <>
+            <Highlighter size={16} strokeWidth={2.25} />
+            <span className="format-color-bar" style={{ background: currentColor }} />
+          </>
+        )}
+      </button>
+      {open && (
+        <div
+          className="format-swatch-popover"
+          role="dialog"
+          aria-label={kind === 'text' ? 'בחירת צבע טקסט' : 'בחירת צבע הדגשה'}
+          onMouseDown={keepSelection}
+        >
+          <div className="format-swatch-grid">
+            {presets.map((preset) => {
+              const isClear = preset.value === null
+              const selected =
+                !isClear &&
+                preset.value &&
+                currentColor.toLowerCase() === preset.value.toLowerCase() &&
+                (kind === 'text' || active)
+              return (
+                <button
+                  key={preset.label}
+                  type="button"
+                  className={`format-swatch ${isClear ? 'is-clear' : ''} ${
+                    selected ? 'is-selected' : ''
+                  }`}
+                  title={preset.label}
+                  aria-label={preset.label}
+                  style={
+                    isClear || !preset.value
+                      ? undefined
+                      : kind === 'text'
+                        ? { background: '#fff', color: preset.value }
+                        : { background: preset.value }
+                  }
+                  onClick={() => {
+                    if (isClear) onClear?.()
+                    else if (preset.value) onPick(preset.value)
+                    setOpen(false)
+                  }}
+                >
+                  {kind === 'text' && !isClear ? (
+                    <span className="format-swatch-letter">א</span>
+                  ) : isClear ? (
+                    <span className="format-swatch-clear" aria-hidden="true">
+                      /
+                    </span>
+                  ) : null}
+                </button>
+              )
+            })}
+          </div>
+          <button
+            type="button"
+            className="format-swatch-more"
+            onMouseDown={onRememberSelection}
+            onClick={() => {
+              onRememberSelection()
+              customInputRef.current?.click()
+            }}
+          >
+            צבעים נוספים
+          </button>
+          <input
+            ref={customInputRef}
+            type="color"
+            className="format-swatch-native"
+            value={currentColor}
+            aria-label="בחירת צבע מותאם"
+            onChange={(e) => {
+              onPickCustom(e.target.value)
+              setOpen(false)
+            }}
+          />
+        </div>
+      )}
+    </div>
+  )
 }
 
 function ToolIcon({

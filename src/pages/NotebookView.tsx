@@ -34,6 +34,7 @@ export default function NotebookView({ settings, onChanged }: Props) {
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [openChapterId, setOpenChapterId] = useState<string | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
+  const [navPagesChapterId, setNavPagesChapterId] = useState<string | null>(null)
   const dragging = useRef(false)
   const pendingClick = useRef<number | null>(null)
 
@@ -200,8 +201,14 @@ export default function NotebookView({ settings, onChanged }: Props) {
     action()
   }
 
-  const openChapter = chapters.find((chapter) => chapter.id === openChapterId) ?? null
-  const openPages = openChapter ? pagesByChapter[openChapter.id] || [] : []
+  // Keep the pages pane populated during the back animation so exit content stays visible.
+  useEffect(() => {
+    if (openChapterId) setNavPagesChapterId(openChapterId)
+  }, [openChapterId])
+
+  const pagesPaneChapter =
+    chapters.find((chapter) => chapter.id === (openChapterId ?? navPagesChapterId)) ?? null
+  const openPages = pagesPaneChapter ? pagesByChapter[pagesPaneChapter.id] || [] : []
 
   const deleteChapter = async (chapter: Chapter) => {
     const pageCount = (pagesByChapter[chapter.id] || []).length
@@ -304,152 +311,52 @@ export default function NotebookView({ settings, onChanged }: Props) {
       {tab === 'notes' && (
         <div className="notebook-layout notebook-layout-fill notebook-layout-resize">
           <aside className="sidebar sidebar-fill" style={{ width: sidebarWidth, flex: `0 0 ${sidebarWidth}px` }}>
-            {openChapter ? (
-              <>
-                <button
-                  type="button"
-                  className="sidebar-back"
-                  onClick={() => setOpenChapterId(null)}
+            <div className="sidebar-nav-viewport">
+              <div
+                className={`sidebar-nav-track ${openChapterId ? 'is-pages' : 'is-chapters'}`}
+                aria-live="polite"
+              >
+                <div
+                  className="sidebar-nav-pane"
+                  data-pane="chapters"
+                  aria-hidden={!!openChapterId}
                 >
-                  <span aria-hidden="true">→</span>
-                  <span>חזרה לפרקים</span>
-                </button>
+                  <p className="sidebar-view-label">פרקים</p>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ width: '100%' }}
+                    onClick={() => setEditTarget({ kind: 'new-chapter', value: 'פרק חדש' })}
+                  >
+                    + פרק
+                  </button>
 
-                <div className="sidebar-chapter-row">
-                  {editTarget?.kind === 'chapter' && editTarget.id === openChapter.id ? (
+                  {editTarget?.kind === 'new-chapter' && (
                     <InlineNameInput
                       value={editTarget.value}
                       onChange={(value) => setEditTarget({ ...editTarget, value })}
                       onCommit={() => void commitEdit()}
                       onCancel={cancelEdit}
                       placeholder="שם הפרק"
+                      variant="nav"
                     />
-                  ) : (
-                    <>
-                      <h3
-                        className="sidebar-chapter-title"
-                        title="לחיצה כפולה לשינוי שם"
-                        onDoubleClick={() =>
-                          setEditTarget({ kind: 'chapter', id: openChapter.id, value: openChapter.title })
-                        }
-                      >
-                        {openChapter.title}
-                      </h3>
-                      <button
-                        type="button"
-                        className="sidebar-edit-btn sidebar-delete-btn"
-                        title="מחיקת פרק"
-                        onClick={() => void deleteChapter(openChapter)}
-                      >
-                        ×
-                      </button>
-                    </>
                   )}
-                </div>
 
-                {openPages.map((p) => (
-                  <div key={p.id} className="sidebar-page-row">
-                    {editTarget?.kind === 'page' && editTarget.id === p.id ? (
-                      <InlineNameInput
-                        value={editTarget.value}
-                        onChange={(value) => setEditTarget({ ...editTarget, value })}
-                        onCommit={() => void commitEdit()}
-                        onCancel={cancelEdit}
-                        placeholder="שם העמוד"
-                      />
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className={`sidebar-item sidebar-nav-btn ${activePageId === p.id ? 'active' : ''}`}
-                          title="לחיצה כפולה לשינוי שם"
-                          aria-current={activePageId === p.id ? 'page' : undefined}
-                          onClick={() => runAfterSingleClick(() => setActivePageId(p.id))}
-                          onDoubleClick={() =>
-                            consumeDoubleClick(() =>
-                              setEditTarget({
-                                kind: 'page',
-                                id: p.id,
-                                chapterId: openChapter.id,
-                                value: p.title,
-                              }),
-                            )
-                          }
-                        >
-                          {p.title}
-                        </button>
-                        <button
-                          type="button"
-                          className="sidebar-edit-btn sidebar-delete-btn"
-                          title="מחיקת עמוד"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void deletePage(p)
-                          }}
-                        >
-                          ×
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-
-                {editTarget?.kind === 'new-page' && editTarget.chapterId === openChapter.id ? (
-                  <InlineNameInput
-                    value={editTarget.value}
-                    onChange={(value) => setEditTarget({ ...editTarget, value })}
-                    onCommit={() => void commitEdit()}
-                    onCancel={cancelEdit}
-                    placeholder="שם העמוד"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="sidebar-item add-page-btn"
-                    onClick={() =>
-                      setEditTarget({ kind: 'new-page', chapterId: openChapter.id, value: 'עמוד חדש' })
-                    }
-                  >
-                    + עמוד
-                  </button>
-                )}
-              </>
-            ) : (
-              <>
-                <p className="sidebar-view-label">פרקים</p>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ width: '100%' }}
-                  onClick={() => setEditTarget({ kind: 'new-chapter', value: 'פרק חדש' })}
-                >
-                  + פרק
-                </button>
-
-                {editTarget?.kind === 'new-chapter' && (
-                  <InlineNameInput
-                    value={editTarget.value}
-                    onChange={(value) => setEditTarget({ ...editTarget, value })}
-                    onCommit={() => void commitEdit()}
-                    onCancel={cancelEdit}
-                    placeholder="שם הפרק"
-                  />
-                )}
-
-                {chapters.map((ch) => {
-                  const selected = activePage?.chapter_id === ch.id
-                  return (
-                    <div key={ch.id} className="sidebar-chapter-row">
-                      {editTarget?.kind === 'chapter' && editTarget.id === ch.id ? (
-                        <InlineNameInput
-                          value={editTarget.value}
-                          onChange={(value) => setEditTarget({ ...editTarget, value })}
-                          onCommit={() => void commitEdit()}
-                          onCancel={cancelEdit}
-                          placeholder="שם הפרק"
-                        />
-                      ) : (
-                        <>
+                  {chapters.map((ch) => {
+                    const selected = activePage?.chapter_id === ch.id
+                    const renaming = editTarget?.kind === 'chapter' && editTarget.id === ch.id
+                    return (
+                      <div key={ch.id} className="sidebar-chapter-row">
+                        {renaming ? (
+                          <InlineNameInput
+                            value={editTarget.value}
+                            onChange={(value) => setEditTarget({ ...editTarget, value })}
+                            onCommit={() => void commitEdit()}
+                            onCancel={cancelEdit}
+                            placeholder="שם הפרק"
+                            variant="nav"
+                          />
+                        ) : (
                           <button
                             type="button"
                             className={`sidebar-item sidebar-nav-btn ${selected ? 'active' : ''}`}
@@ -464,24 +371,155 @@ export default function NotebookView({ settings, onChanged }: Props) {
                           >
                             {ch.title}
                           </button>
-                          <button
-                            type="button"
-                            className="sidebar-edit-btn sidebar-delete-btn"
-                            title="מחיקת פרק"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void deleteChapter(ch)
-                            }}
+                        )}
+                        <button
+                          type="button"
+                          className="sidebar-edit-btn sidebar-delete-btn"
+                          title="מחיקת פרק"
+                          tabIndex={renaming ? -1 : 0}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void deleteChapter(ch)
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div
+                  className="sidebar-nav-pane"
+                  data-pane="pages"
+                  aria-hidden={!openChapterId}
+                >
+                  {pagesPaneChapter && (
+                    <>
+                      <button
+                        type="button"
+                        className="sidebar-back"
+                        onClick={() => setOpenChapterId(null)}
+                      >
+                        <span aria-hidden="true">→</span>
+                        <span>חזרה לפרקים</span>
+                      </button>
+
+                      <div className="sidebar-chapter-row sidebar-chapter-heading-row">
+                        {editTarget?.kind === 'chapter' && editTarget.id === pagesPaneChapter.id ? (
+                          <InlineNameInput
+                            value={editTarget.value}
+                            onChange={(value) => setEditTarget({ ...editTarget, value })}
+                            onCommit={() => void commitEdit()}
+                            onCancel={cancelEdit}
+                            placeholder="שם הפרק"
+                            variant="title"
+                          />
+                        ) : (
+                          <h3
+                            className="sidebar-chapter-title"
+                            title="לחיצה כפולה לשינוי שם"
+                            onDoubleClick={() =>
+                              setEditTarget({
+                                kind: 'chapter',
+                                id: pagesPaneChapter.id,
+                                value: pagesPaneChapter.title,
+                              })
+                            }
                           >
-                            ×
-                          </button>
-                        </>
+                            {pagesPaneChapter.title}
+                          </h3>
+                        )}
+                        <button
+                          type="button"
+                          className="sidebar-edit-btn sidebar-delete-btn"
+                          title="מחיקת פרק"
+                          onClick={() => void deleteChapter(pagesPaneChapter)}
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      {openPages.map((p) => {
+                        const renaming = editTarget?.kind === 'page' && editTarget.id === p.id
+                        return (
+                          <div key={p.id} className="sidebar-page-row">
+                            {renaming ? (
+                              <InlineNameInput
+                                value={editTarget.value}
+                                onChange={(value) => setEditTarget({ ...editTarget, value })}
+                                onCommit={() => void commitEdit()}
+                                onCancel={cancelEdit}
+                                placeholder="שם העמוד"
+                                variant="nav"
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className={`sidebar-item sidebar-nav-btn ${activePageId === p.id ? 'active' : ''}`}
+                                title="לחיצה כפולה לשינוי שם"
+                                aria-current={activePageId === p.id ? 'page' : undefined}
+                                onClick={() => runAfterSingleClick(() => setActivePageId(p.id))}
+                                onDoubleClick={() =>
+                                  consumeDoubleClick(() =>
+                                    setEditTarget({
+                                      kind: 'page',
+                                      id: p.id,
+                                      chapterId: pagesPaneChapter.id,
+                                      value: p.title,
+                                    }),
+                                  )
+                                }
+                              >
+                                {p.title}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="sidebar-edit-btn sidebar-delete-btn"
+                              title="מחיקת עמוד"
+                              tabIndex={renaming ? -1 : 0}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void deletePage(p)
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        )
+                      })}
+
+                      {editTarget?.kind === 'new-page' &&
+                      editTarget.chapterId === pagesPaneChapter.id ? (
+                        <InlineNameInput
+                          value={editTarget.value}
+                          onChange={(value) => setEditTarget({ ...editTarget, value })}
+                          onCommit={() => void commitEdit()}
+                          onCancel={cancelEdit}
+                          placeholder="שם העמוד"
+                          variant="nav"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="sidebar-item add-page-btn"
+                          onClick={() =>
+                            setEditTarget({
+                              kind: 'new-page',
+                              chapterId: pagesPaneChapter.id,
+                              value: 'עמוד חדש',
+                            })
+                          }
+                        >
+                          + עמוד
+                        </button>
                       )}
-                    </div>
-                  )
-                })}
-              </>
-            )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
           </aside>
 
           <div
@@ -525,12 +563,14 @@ function InlineNameInput({
   onCommit,
   onCancel,
   placeholder,
+  variant = 'nav',
 }: {
   value: string
   onChange: (v: string) => void
   onCommit: () => void
   onCancel: () => void
   placeholder: string
+  variant?: 'nav' | 'title'
 }) {
   const settled = useRef(false)
   const settle = (save: boolean) => {
@@ -541,9 +581,9 @@ function InlineNameInput({
   }
 
   return (
-    <div className="inline-name-row">
+    <div className={`inline-name-row inline-name-row-${variant}`}>
       <input
-        className="inline-name-input"
+        className={`inline-name-input inline-name-input-${variant}`}
         value={value}
         autoFocus
         placeholder={placeholder}

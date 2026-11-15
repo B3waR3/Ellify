@@ -20,6 +20,26 @@ export const PAGE_COLORS = [
   '#FFFFFF',
 ]
 
+/** Preset text colors for the note formatting toolbar */
+export const TEXT_COLOR_PRESETS: { label: string; value: string }[] = [
+  { label: 'חום כהה', value: '#3E342F' },
+  { label: 'שחור', value: '#1A1A1A' },
+  { label: 'ירוק כהה', value: '#2F5D50' },
+  { label: 'כחול', value: '#2B5F9E' },
+  { label: 'אדום', value: '#C0392B' },
+  { label: 'סגול', value: '#6B3FA0' },
+]
+
+/** Preset highlight colors for the note formatting toolbar */
+export const HIGHLIGHT_COLOR_PRESETS: { label: string; value: string | null }[] = [
+  { label: 'צהוב', value: '#FFF59D' },
+  { label: 'ירוק בהיר', value: '#C8E6C9' },
+  { label: 'ורוד בהיר', value: '#F8BBD0' },
+  { label: 'כחול בהיר', value: '#BBDEFB' },
+  { label: 'סגול בהיר', value: '#E1BEE7' },
+  { label: 'ללא הדגשה', value: null },
+]
+
 export function isValidHex(value: string): boolean {
   return /^#([0-9A-Fa-f]{6})$/.test(value.trim())
 }
