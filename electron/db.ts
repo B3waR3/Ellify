@@ -152,6 +152,7 @@ export async function initDatabase() {
   ensureColumn('flashcards', 'reviews', 'INTEGER DEFAULT 0')
   ensureColumn('flashcards', 'successes', 'INTEGER DEFAULT 0')
   ensureColumn('flashcards', 'failures', 'INTEGER DEFAULT 0')
+  ensureColumn('pages', 'content_json_backup', 'TEXT')
 
   getDb().run(`
     CREATE TABLE IF NOT EXISTS instructor_profiles (
@@ -361,7 +362,8 @@ export function createPage(chapterId: string, title: string): Page {
     id: uuid(),
     chapter_id: chapterId,
     title,
-    content_json: JSON.stringify({ type: 'doc', content: [{ type: 'paragraph' }] }),
+    content_json: JSON.stringify({ version: 1, type: 'canvas', elements: [] }),
+    content_json_backup: null,
     sort_order: (max?.m ?? -1) + 1,
     updated_at: new Date().toISOString(),
   }
@@ -378,6 +380,15 @@ export function updatePage(
 ): Page | null {
   const current = queryOne<Page>('SELECT * FROM pages WHERE id = ?', [id])
   if (!current) return null
+
+  if (
+    data.content_json !== undefined &&
+    data.content_json !== current.content_json &&
+    !current.content_json_backup
+  ) {
+    run('UPDATE pages SET content_json_backup = ? WHERE id = ?', [current.content_json, id])
+  }
+
   const next = {
     ...current,
     title: data.title ?? current.title,
@@ -390,7 +401,7 @@ export function updatePage(
     next.updated_at,
     id,
   ])
-  return next
+  return queryOne<Page>('SELECT * FROM pages WHERE id = ?', [id])
 }
 
 export function deletePage(id: string) {
@@ -626,16 +637,29 @@ export function getMaterialsText(notebookId: string): { materials: string; pastE
   }
 }
 
+function plainFromNode(node: { text?: string; content?: unknown[] }): string {
+  const parts: string[] = []
+  if (node.text) parts.push(node.text)
+  for (const child of node.content || []) {
+    parts.push(plainFromNode(child as { text?: string; content?: unknown[] }))
+  }
+  return parts.join(' ')
+}
+
 function plainFromTipTap(json: string): string {
   try {
-    const doc = JSON.parse(json) as { text?: string; content?: unknown[] }
-    const parts: string[] = []
-    const walk = (node: { text?: string; content?: unknown[] }) => {
-      if (node.text) parts.push(node.text)
-      for (const child of node.content || []) walk(child as { text?: string; content?: unknown[] })
+    const doc = JSON.parse(json) as {
+      type?: string
+      text?: string
+      content?: unknown[]
+      elements?: Array<{ content?: { text?: string; content?: unknown[] } }>
     }
-    walk(doc)
-    return parts.join(' ')
+    if (doc.type === 'canvas' && Array.isArray(doc.elements)) {
+      return doc.elements
+        .map((element) => (element.content ? plainFromNode(element.content) : ''))
+        .join(' ')
+    }
+    return plainFromNode(doc)
   } catch {
     return ''
   }

@@ -1,6 +1,6 @@
 {
   "name": "ella",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Ellify — מחברות לימוד וסביבת למידה",
   "main": "dist-electron/main.js",
   "author": "Ella",
@@ -32,11 +32,15 @@
       "node_modules/sql.js/dist/sql-wasm.wasm"
     ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "signAndEditExecutable": false
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.education",
       "identity": null
     },
@@ -44,15 +48,20 @@
   },
   "dependencies": {
     "@tiptap/extension-color": "^2.11.5",
+    "@tiptap/extension-font-family": "^2.27.3",
+    "@tiptap/extension-highlight": "^2.27.3",
+    "@tiptap/extension-image": "^2.27.3",
     "@tiptap/extension-placeholder": "^2.11.5",
     "@tiptap/extension-table": "^2.11.5",
     "@tiptap/extension-table-cell": "^2.11.5",
     "@tiptap/extension-table-header": "^2.11.5",
     "@tiptap/extension-table-row": "^2.11.5",
+    "@tiptap/extension-text-align": "^2.27.3",
     "@tiptap/extension-text-style": "^2.11.5",
     "@tiptap/extension-underline": "^2.11.5",
     "@tiptap/react": "^2.11.5",
     "@tiptap/starter-kit": "^2.11.5",
+    "lucide-react": "^1.73.0",
     "pdf-parse": "^1.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

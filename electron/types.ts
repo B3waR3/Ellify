@@ -18,8 +18,30 @@ export type Page = {
   chapter_id: string
   title: string
   content_json: string
+  content_json_backup?: string | null
   sort_order: number
   updated_at: string
+}
+
+export type TipTapDoc = {
+  type: 'doc'
+  content?: unknown[]
+}
+
+export type CanvasTextElement = {
+  id: string
+  type: 'text'
+  x: number
+  y: number
+  width: number
+  zIndex: number
+  content: TipTapDoc
+}
+
+export type CanvasPageDocument = {
+  version: 1
+  type: 'canvas'
+  elements: CanvasTextElement[]
 }
 
 export type Flashcard = {

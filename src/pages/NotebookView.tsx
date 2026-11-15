@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { ella } from '../lib/api'
 import NotesEditor from '../components/NotesEditor'
 import StudyWorkspace from '../components/StudyWorkspace'
@@ -25,15 +25,12 @@ const SIDEBAR_DEFAULT = 260
 
 export default function NotebookView({ settings, onChanged }: Props) {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const [notebook, setNotebook] = useState<Notebook | null>(null)
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [pagesByChapter, setPagesByChapter] = useState<Record<string, Page[]>>({})
   const [activePageId, setActivePageId] = useState<string | null>(null)
   const [tab, setTab] = useState<MainTab>('notes')
   const [examDate, setExamDate] = useState('')
-  const [editingNotebookName, setEditingNotebookName] = useState(false)
-  const [notebookNameDraft, setNotebookNameDraft] = useState('')
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [openChapterId, setOpenChapterId] = useState<string | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
@@ -53,7 +50,6 @@ export default function NotebookView({ settings, onChanged }: Props) {
     const nb = await ella().notebooks.get(id)
     if (!nb) return
     setNotebook(nb)
-    setNotebookNameDraft(nb.name)
     setExamDate(nb.exam_date ? nb.exam_date.slice(0, 10) : '')
     const chs = await ella().chapters.list(id)
     setChapters(chs)
@@ -125,19 +121,6 @@ export default function NotebookView({ settings, onChanged }: Props) {
       exam_date: examDate ? new Date(examDate).toISOString() : null,
     })
     if (updated) setNotebook(updated)
-  }
-
-  const saveNotebookName = async () => {
-    if (!notebook) return
-    const name = notebookNameDraft.trim()
-    if (!name || name === notebook.name) {
-      setNotebookNameDraft(notebook.name)
-      setEditingNotebookName(false)
-      return
-    }
-    const updated = await ella().notebooks.update(notebook.id, { name })
-    if (updated) setNotebook(updated)
-    setEditingNotebookName(false)
   }
 
   const commitEdit = async () => {
@@ -241,13 +224,6 @@ export default function NotebookView({ settings, onChanged }: Props) {
     await refreshTree()
   }
 
-  const deleteNotebook = async () => {
-    if (!notebook) return
-    if (!confirm(`למחוק את המחברת "${notebook.name}"?`)) return
-    await ella().notebooks.delete(notebook.id)
-    navigate('/')
-  }
-
   const onTitleChange = async (title: string) => {
     if (!activePage) return
     const updated = await ella().pages.update(activePage.id, { title })
@@ -263,7 +239,15 @@ export default function NotebookView({ settings, onChanged }: Props) {
 
   const onContentChange = async (content_json: string) => {
     if (!activePage) return
-    await ella().pages.update(activePage.id, { content_json })
+    const updated = await ella().pages.update(activePage.id, { content_json })
+    if (updated) {
+      setPagesByChapter((prev) => ({
+        ...prev,
+        [updated.chapter_id]: (prev[updated.chapter_id] || []).map((p) =>
+          p.id === updated.id ? updated : p,
+        ),
+      }))
+    }
   }
 
   if (!notebook) {
@@ -282,35 +266,7 @@ export default function NotebookView({ settings, onChanged }: Props) {
             ← כל המחברות
           </Link>
           <span className="nb-dot" style={{ background: notebook.color }} />
-          {editingNotebookName ? (
-            <input
-              className="onenote-title-input"
-              value={notebookNameDraft}
-              autoFocus
-              onChange={(e) => setNotebookNameDraft(e.target.value)}
-              onBlur={() => void saveNotebookName()}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void saveNotebookName()
-                if (e.key === 'Escape') {
-                  setNotebookNameDraft(notebook.name)
-                  setEditingNotebookName(false)
-                }
-              }}
-            />
-          ) : (
-            <button
-              type="button"
-              className="onenote-title-btn"
-              title="לחצי לשינוי שם המחברת"
-              onClick={() => {
-                setNotebookNameDraft(notebook.name)
-                setEditingNotebookName(true)
-              }}
-            >
-              <h1 className="onenote-title">{notebook.name}</h1>
-              <span className="rename-hint">עריכה</span>
-            </button>
-          )}
+          <h1 className="onenote-title">{notebook.name}</h1>
         </div>
         <div className="onenote-appbar-left">
           <div className="field field-inline">
@@ -325,9 +281,6 @@ export default function NotebookView({ settings, onChanged }: Props) {
           <Link className="btn btn-ghost btn-sm" to="/settings">
             הגדרות
           </Link>
-          <button className="btn btn-danger btn-sm" onClick={deleteNotebook}>
-            מחקי מחברת
-          </button>
         </div>
       </header>
 
@@ -545,6 +498,7 @@ export default function NotebookView({ settings, onChanged }: Props) {
                 key={activePage.id}
                 notebookId={notebook.id}
                 title={activePage.title}
+                updatedAt={activePage.updated_at}
                 contentJson={activePage.content_json}
                 onTitleChange={onTitleChange}
                 onContentChange={onContentChange}

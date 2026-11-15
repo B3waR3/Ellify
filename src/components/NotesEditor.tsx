@@ -1,24 +1,51 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react'
+import type { Editor } from '@tiptap/react'
+import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  Highlighter,
+  Image as ImageIcon,
+  Italic,
+  List,
+  ListOrdered,
+  Strikethrough,
+  Table as TableIcon,
+  Underline as UnderlineIcon,
+} from 'lucide-react'
 import { ella } from '../lib/api'
-import { useEditor, EditorContent } from '@tiptap/react'
 import { PAGE_COLORS } from '../lib/colors'
-import StarterKit from '@tiptap/starter-kit'
-import Underline from '@tiptap/extension-underline'
-import TextStyle from '@tiptap/extension-text-style'
-import { Color } from '@tiptap/extension-color'
-import Placeholder from '@tiptap/extension-placeholder'
-import Table from '@tiptap/extension-table'
-import TableRow from '@tiptap/extension-table-row'
-import TableCell from '@tiptap/extension-table-cell'
-import TableHeader from '@tiptap/extension-table-header'
-
-type RibbonTab = 'home' | 'insert' | 'view'
+import NoteTextBox from './NoteTextBox'
+import {
+  canvasHeightFor,
+  createTextElement,
+  DEFAULT_TEXT_WIDTH,
+  nextZIndex,
+  parsePageContent,
+  serializeCanvas,
+  type CanvasPageDocument,
+  type CanvasTextElement,
+  type TipTapDoc,
+} from '../lib/canvasDocument'
+import { FONT_FAMILIES, FONT_SIZES } from '../lib/tiptapExtensions'
 
 type AssistAction = 'explain' | 'summarize' | 'simplify' | 'expand' | 'questions'
 
 type Props = {
   notebookId?: string
   title: string
+  updatedAt?: string | null
   contentJson: string
   onTitleChange: (title: string) => void
   onContentChange: (json: string) => void
@@ -27,48 +54,204 @@ type Props = {
 export default function NotesEditor({
   notebookId,
   title,
+  updatedAt,
   contentJson,
   onTitleChange,
   onContentChange,
 }: Props) {
-  const [ribbon, setRibbon] = useState<RibbonTab>('home')
   const [pageColor, setPageColor] = useState('#ffffff')
   const [ruled, setRuled] = useState(false)
-  const [ruleColor, setRuleColor] = useState('#d8d0e8')
+  const [ruleColor, setRuleColor] = useState('#DDD8CF')
+  const [textColor, setTextColor] = useState('#3E342F')
+  const [highlightColor, setHighlightColor] = useState('#A5B5A0')
   const [suggestion, setSuggestion] = useState('')
   const [assistError, setAssistError] = useState('')
+  const [doc, setDoc] = useState<CanvasPageDocument>(() => parsePageContent(contentJson))
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const [editorVersion, setEditorVersion] = useState(0)
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Underline,
-      TextStyle,
-      Color,
-      Placeholder.configure({ placeholder: 'התחילי לכתוב סיכום…' }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
-    ],
-    content: safeParse(contentJson),
-    onUpdate: ({ editor: ed }) => {
-      onContentChange(JSON.stringify(ed.getJSON()))
-    },
-  })
+  const editorsRef = useRef(new Map<string, Editor>())
+  const canvasRef = useRef<HTMLDivElement | null>(null)
+  const surfaceRef = useRef<HTMLDivElement | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const saveTimerRef = useRef<number | null>(null)
+  const docRef = useRef(doc)
+  const suppressCreateRef = useRef(false)
+  const activeIdRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!editor) return
-    const current = JSON.stringify(editor.getJSON())
-    if (current !== contentJson) {
-      editor.commands.setContent(safeParse(contentJson), false)
+    docRef.current = doc
+  }, [doc])
+
+  useEffect(() => {
+    activeIdRef.current = activeId
+  }, [activeId])
+
+  const flushSave = useCallback(() => {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contentJson, editor])
+    onContentChange(serializeCanvas(docRef.current))
+  }, [onContentChange])
+
+  const scheduleSave = useCallback(
+    (next: CanvasPageDocument) => {
+      docRef.current = next
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = window.setTimeout(() => {
+        saveTimerRef.current = null
+        onContentChange(serializeCanvas(next))
+      }, 300)
+    },
+    [onContentChange],
+  )
+
+  useEffect(() => {
+    return () => {
+      flushSave()
+    }
+  }, [flushSave])
+
+  const updateDoc = useCallback(
+    (updater: (prev: CanvasPageDocument) => CanvasPageDocument) => {
+      setDoc((prev) => {
+        const next = updater(prev)
+        scheduleSave(next)
+        return next
+      })
+    },
+    [scheduleSave],
+  )
+
+  const activeEditor = activeId ? editorsRef.current.get(activeId) || null : null
+
+  useEffect(() => {
+    if (!activeEditor) return
+    const bump = () => setEditorVersion((value) => value + 1)
+    activeEditor.on('selectionUpdate', bump)
+    activeEditor.on('transaction', bump)
+    return () => {
+      activeEditor.off('selectionUpdate', bump)
+      activeEditor.off('transaction', bump)
+    }
+  }, [activeEditor])
+
+  const onEditorReady = useCallback((id: string, editor: Editor) => {
+    editorsRef.current.set(id, editor)
+    setEditorVersion((value) => value + 1)
+  }, [])
+
+  const onEditorDestroy = useCallback((id: string) => {
+    editorsRef.current.delete(id)
+  }, [])
+
+  const activate = useCallback(
+    (id: string) => {
+      const switching = activeIdRef.current !== id
+      setActiveId(id)
+      if (!switching) return
+      updateDoc((prev) => {
+        const maxZ = nextZIndex(prev.elements)
+        return {
+          ...prev,
+          elements: prev.elements.map((element) =>
+            element.id === id ? { ...element, zIndex: maxZ } : element,
+          ),
+        }
+      })
+    },
+    [updateDoc],
+  )
+
+  const changeContent = useCallback(
+    (id: string, content: TipTapDoc) => {
+      updateDoc((prev) => ({
+        ...prev,
+        elements: prev.elements.map((element) =>
+          element.id === id ? { ...element, content } : element,
+        ),
+      }))
+    },
+    [updateDoc],
+  )
+
+  const changeFrame = useCallback(
+    (id: string, frame: Partial<Pick<CanvasTextElement, 'x' | 'y' | 'width' | 'zIndex'>>) => {
+      suppressCreateRef.current = true
+      window.setTimeout(() => {
+        suppressCreateRef.current = false
+      }, 80)
+      updateDoc((prev) => ({
+        ...prev,
+        elements: prev.elements.map((element) =>
+          element.id === id ? { ...element, ...frame } : element,
+        ),
+      }))
+    },
+    [updateDoc],
+  )
+
+  const removeElement = useCallback(
+    (id: string) => {
+      updateDoc((prev) => ({
+        ...prev,
+        elements: prev.elements.filter((element) => element.id !== id),
+      }))
+      setActiveId((current) => (current === id ? null : current))
+      setFocusId((current) => (current === id ? null : current))
+      editorsRef.current.delete(id)
+    },
+    [updateDoc],
+  )
+
+  const createAt = useCallback(
+    (x: number, y: number) => {
+      const element = createTextElement({
+        x: Math.max(0, x),
+        y: Math.max(0, y),
+        width: DEFAULT_TEXT_WIDTH,
+        zIndex: nextZIndex(docRef.current.elements),
+      })
+      updateDoc((prev) => ({
+        ...prev,
+        elements: [...prev.elements, element],
+      }))
+      setActiveId(element.id)
+      setFocusId(element.id)
+      window.setTimeout(() => {
+        setFocusId((current) => (current === element.id ? null : current))
+      }, 400)
+    },
+    [updateDoc],
+  )
+
+  const onCanvasClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (suppressCreateRef.current) return
+    if (event.target !== event.currentTarget && event.target !== surfaceRef.current) {
+      const target = event.target as HTMLElement
+      if (!target.classList?.contains('note-canvas-hint')) return
+    }
+    const surface = surfaceRef.current
+    if (!surface) return
+    const rect = surface.getBoundingClientRect()
+    const x = Math.max(0, rect.right - event.clientX - DEFAULT_TEXT_WIDTH / 2)
+    const y = Math.max(0, event.clientY - rect.top - 12)
+    createAt(x, y)
+  }
+
+  const run = (action: (editor: Editor) => void) => {
+    if (!activeEditor) return
+    action(activeEditor)
+    activeEditor.view.focus()
+    setEditorVersion((value) => value + 1)
+  }
 
   const assist = async (action: AssistAction) => {
-    if (!editor || !notebookId) return
-    const { from, to } = editor.state.selection
-    const selection = editor.state.doc.textBetween(from, to, ' ').trim()
+    if (!activeEditor || !notebookId) return
+    const { from, to } = activeEditor.state.selection
+    const selection = activeEditor.state.doc.textBetween(from, to, ' ').trim()
     if (!selection) {
       setAssistError('סמני טקסט לפני הבקשה')
       return
@@ -83,222 +266,290 @@ export default function NotesEditor({
     }
   }
 
-  if (!editor) return null
+  const insertImage = () => {
+    imageInputRef.current?.click()
+  }
+
+  const onImageSelected = async (file: File | null) => {
+    if (!file || !activeEditor) return
+    const dataUrl = await readFileAsDataUrl(file)
+    run((editor) => editor.chain().focus().setImage({ src: dataUrl }).run())
+  }
 
   const pageStyle = {
     backgroundColor: pageColor,
     ['--rule-color' as string]: ruleColor,
   } as CSSProperties
 
+  const surfaceHeight = useMemo(() => canvasHeightFor(doc.elements), [doc.elements])
+  void editorVersion
+
+  const currentFontFamily =
+    (activeEditor?.getAttributes('textStyle').fontFamily as string | undefined) || ''
+  const currentFontSize =
+    (activeEditor?.getAttributes('textStyle').fontSize as string | undefined) || ''
+
+  const modifiedLabel = formatUpdatedAt(updatedAt)
+
   return (
     <div className="editor-panel">
-      <div className="onenote-ribbon">
-        <div className="ribbon-tabs">
-          <button
-            type="button"
-            className={`ribbon-tab ${ribbon === 'home' ? 'active' : ''}`}
-            onClick={() => setRibbon('home')}
+      <header className="page-title-bar">
+        <input
+          className="page-title-input"
+          value={title}
+          onChange={(e) => onTitleChange(e.target.value)}
+          placeholder="שם העמוד"
+          aria-label="שם העמוד"
+        />
+        <p className="page-title-meta">
+          {modifiedLabel ? `עודכן לאחרונה ${modifiedLabel}` : 'עדיין לא נשמר'}
+        </p>
+      </header>
+
+      <div className="format-toolbar" role="toolbar" aria-label="עיצוב טקסט">
+        <div className="format-group" aria-label="גופן">
+          <select
+            className="format-select format-select-font"
+            disabled={!activeEditor}
+            value={currentFontFamily}
+            title="גופן"
+            onMouseDown={keepSelection}
+            onChange={(e) => {
+              const value = e.target.value
+              run((editor) => {
+                if (!value) editor.chain().focus().unsetFontFamily().run()
+                else editor.chain().focus().setFontFamily(value).run()
+              })
+            }}
           >
-            בית
-          </button>
-          <button
-            type="button"
-            className={`ribbon-tab ${ribbon === 'insert' ? 'active' : ''}`}
-            onClick={() => setRibbon('insert')}
+            <option value="">גופן</option>
+            {FONT_FAMILIES.map((font) => (
+              <option key={font.value} value={font.value}>
+                {font.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="format-select format-select-size"
+            disabled={!activeEditor}
+            value={currentFontSize}
+            title="גודל גופן"
+            onMouseDown={keepSelection}
+            onChange={(e) => {
+              const value = e.target.value
+              run((editor) => {
+                if (!value) editor.chain().focus().unsetFontSize().run()
+                else editor.chain().focus().setFontSize(value).run()
+              })
+            }}
           >
-            הוספה
-          </button>
-          <button
-            type="button"
-            className={`ribbon-tab ${ribbon === 'view' ? 'active' : ''}`}
-            onClick={() => setRibbon('view')}
-          >
-            תצוגה
-          </button>
+            <option value="">גודל</option>
+            {FONT_SIZES.map((size) => (
+              <option key={size} value={size}>
+                {size.replace('px', '')}
+              </option>
+            ))}
+          </select>
         </div>
 
-        <div className="ribbon-body">
-          {ribbon === 'home' && (
-            <div className="ribbon-groups">
-              <div className="ribbon-group">
-                <div className="ribbon-group-controls">
-                  <button
-                    type="button"
-                    className={`tool-btn ${editor.isActive('heading', { level: 1 }) ? 'is-active' : ''}`}
-                    onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-                  >
-                    כותרת
-                  </button>
-                  <button
-                    type="button"
-                    className={`tool-btn ${editor.isActive('heading', { level: 2 }) ? 'is-active' : ''}`}
-                    onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-                  >
-                    כותרת משנה
-                  </button>
-                </div>
-                <span className="ribbon-group-label">סגנונות</span>
-              </div>
-              <div className="ribbon-group">
-                <div className="ribbon-group-controls">
-                  <button
-                    type="button"
-                    className={`tool-btn ${editor.isActive('bold') ? 'is-active' : ''}`}
-                    onClick={() => editor.chain().focus().toggleBold().run()}
-                  >
-                    מודגש
-                  </button>
-                  <button
-                    type="button"
-                    className={`tool-btn ${editor.isActive('italic') ? 'is-active' : ''}`}
-                    onClick={() => editor.chain().focus().toggleItalic().run()}
-                  >
-                    נטוי
-                  </button>
-                  <button
-                    type="button"
-                    className={`tool-btn ${editor.isActive('underline') ? 'is-active' : ''}`}
-                    onClick={() => editor.chain().focus().toggleUnderline().run()}
-                  >
-                    קו תחתון
-                  </button>
-                  <button
-                    type="button"
-                    className={`tool-btn ${editor.isActive('strike') ? 'is-active' : ''}`}
-                    onClick={() => editor.chain().focus().toggleStrike().run()}
-                  >
-                    קו חוצה
-                  </button>
-                  <label className="tool-btn tool-btn-color">
-                    צבע טקסט
-                    <input
-                      type="color"
-                      defaultValue="#2a1a22"
-                      onChange={(e) => editor.chain().focus().setColor(e.target.value).run()}
-                    />
-                  </label>
-                </div>
-                <span className="ribbon-group-label">גופן</span>
-              </div>
-              <div className="ribbon-group">
-                <div className="ribbon-group-controls">
-                  <button
-                    type="button"
-                    className={`tool-btn ${editor.isActive('bulletList') ? 'is-active' : ''}`}
-                    onClick={() => editor.chain().focus().toggleBulletList().run()}
-                  >
-                    רשימה
-                  </button>
-                  <button
-                    type="button"
-                    className={`tool-btn ${editor.isActive('orderedList') ? 'is-active' : ''}`}
-                    onClick={() => editor.chain().focus().toggleOrderedList().run()}
-                  >
-                    ממוספר
-                  </button>
-                </div>
-                <span className="ribbon-group-label">פסקה</span>
-              </div>
-              <div className="ribbon-group">
-                <div className="ribbon-group-controls">
-                  <button type="button" className="tool-btn" onClick={() => void assist('explain')}>הסבר</button>
-                  <button type="button" className="tool-btn" onClick={() => void assist('summarize')}>סיכום</button>
-                  <button type="button" className="tool-btn" onClick={() => void assist('simplify')}>פישוט</button>
-                  <button type="button" className="tool-btn" onClick={() => void assist('questions')}>שאלות</button>
-                </div>
-                <span className="ribbon-group-label">קטע מסומן</span>
-              </div>
-            </div>
-          )}
+        <span className="format-sep" aria-hidden="true" />
 
-          {ribbon === 'insert' && (
-            <div className="ribbon-groups">
-              <div className="ribbon-group">
-                <div className="ribbon-group-controls">
-                  <button
-                    type="button"
-                    className="tool-btn"
-                    onClick={() =>
-                      editor
-                        .chain()
-                        .focus()
-                        .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-                        .run()
-                    }
-                  >
-                    טבלה
-                  </button>
-                  <button type="button" className="tool-btn" disabled title="בקרוב">
-                    מפת חשיבה
-                  </button>
-                  <button type="button" className="tool-btn" disabled title="בקרוב">
-                    תרשים
-                  </button>
-                </div>
-                <span className="ribbon-group-label">תוכן</span>
-              </div>
-              <p className="ribbon-hint">פיצ׳רים נוספים להוספה יוגדרו כאן בהמשך</p>
-            </div>
-          )}
+        <div className="format-group" aria-label="עיצוב טקסט">
+          <ToolIcon
+            label="מודגש (Ctrl+B)"
+            active={!!activeEditor?.isActive('bold')}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().toggleBold().run())}
+          >
+            <Bold size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon
+            label="נטוי (Ctrl+I)"
+            active={!!activeEditor?.isActive('italic')}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().toggleItalic().run())}
+          >
+            <Italic size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon
+            label="קו תחתון (Ctrl+U)"
+            active={!!activeEditor?.isActive('underline')}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().toggleUnderline().run())}
+          >
+            <UnderlineIcon size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon
+            label="קו חוצה"
+            active={!!activeEditor?.isActive('strike')}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().toggleStrike().run())}
+          >
+            <Strikethrough size={16} strokeWidth={2.25} />
+          </ToolIcon>
+        </div>
 
-          {ribbon === 'view' && (
-            <div className="ribbon-groups">
-              <div className="ribbon-group">
-                <div className="ribbon-group-controls">
-                  <button
-                    type="button"
-                    className={`tool-btn ${ruled ? 'is-active' : ''}`}
-                    onClick={() => setRuled((v) => !v)}
-                  >
-                    קווי סרגל
-                  </button>
-                  <label className="tool-btn tool-btn-color">
-                    צבע קווים
-                    <input
-                      type="color"
-                      value={ruleColor}
-                      onChange={(e) => setRuleColor(e.target.value)}
-                      disabled={!ruled}
-                    />
-                  </label>
-                </div>
-                <span className="ribbon-group-label">סרגל</span>
-              </div>
-              <div className="ribbon-group">
-                <div className="ribbon-group-controls page-color-swatches">
-                  {PAGE_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      className={`page-swatch ${pageColor.toUpperCase() === c.toUpperCase() ? 'active' : ''}`}
-                      style={{ background: c }}
-                      title={c}
-                      onClick={() => setPageColor(c)}
-                    />
-                  ))}
-                  <label className="tool-btn tool-btn-color">
-                    HEX
-                    <input
-                      type="color"
-                      value={pageColor}
-                      onChange={(e) => setPageColor(e.target.value)}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="tool-btn"
-                    onClick={() => {
-                      setPageColor('#ffffff')
-                      setRuled(false)
-                    }}
-                  >
-                    איפוס תצוגה
-                  </button>
-                </div>
-                <span className="ribbon-group-label">עמוד</span>
-              </div>
-            </div>
-          )}
+        <span className="format-sep" aria-hidden="true" />
+
+        <div className="format-group" aria-label="צבע והדגשה">
+          <label
+            className={`format-icon format-color ${!activeEditor ? 'is-disabled' : ''}`}
+            title="צבע טקסט"
+            onMouseDown={keepSelection}
+          >
+            <span className="format-color-letter" style={{ borderBottomColor: textColor }}>
+              A
+            </span>
+            <input
+              type="color"
+              value={textColor}
+              disabled={!activeEditor}
+              onChange={(e) => {
+                const value = e.target.value
+                setTextColor(value)
+                run((editor) => editor.chain().focus().setColor(value).run())
+              }}
+            />
+          </label>
+          <label
+            className={`format-icon format-color ${!activeEditor ? 'is-disabled' : ''} ${
+              activeEditor?.isActive('highlight') ? 'is-active' : ''
+            }`}
+            title="הדגשת רקע"
+            onMouseDown={keepSelection}
+          >
+            <Highlighter size={16} strokeWidth={2.25} />
+            <span className="format-color-bar" style={{ background: highlightColor }} />
+            <input
+              type="color"
+              value={highlightColor}
+              disabled={!activeEditor}
+              onChange={(e) => {
+                const value = e.target.value
+                setHighlightColor(value)
+                run((editor) => editor.chain().focus().toggleHighlight({ color: value }).run())
+              }}
+            />
+          </label>
+        </div>
+
+        <span className="format-sep" aria-hidden="true" />
+
+        <div className="format-group" aria-label="פסקה">
+          <ToolIcon
+            label="רשימה עם תבליטים"
+            active={!!activeEditor?.isActive('bulletList')}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().toggleBulletList().run())}
+          >
+            <List size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon
+            label="רשימה ממוספרת"
+            active={!!activeEditor?.isActive('orderedList')}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().toggleOrderedList().run())}
+          >
+            <ListOrdered size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon
+            label="יישור לימין"
+            active={!!activeEditor?.isActive({ textAlign: 'right' })}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().setTextAlign('right').run())}
+          >
+            <AlignRight size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon
+            label="יישור למרכז"
+            active={!!activeEditor?.isActive({ textAlign: 'center' })}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().setTextAlign('center').run())}
+          >
+            <AlignCenter size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon
+            label="יישור לשמאל"
+            active={!!activeEditor?.isActive({ textAlign: 'left' })}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().setTextAlign('left').run())}
+          >
+            <AlignLeft size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon
+            label="יישור לשני הצדדים"
+            active={!!activeEditor?.isActive({ textAlign: 'justify' })}
+            disabled={!activeEditor}
+            onClick={() => run((editor) => editor.chain().focus().setTextAlign('justify').run())}
+          >
+            <AlignJustify size={16} strokeWidth={2.25} />
+          </ToolIcon>
+        </div>
+
+        <span className="format-sep" aria-hidden="true" />
+
+        <div className="format-group" aria-label="הוספה">
+          <ToolIcon
+            label="הוספת טבלה"
+            disabled={!activeEditor}
+            onClick={() =>
+              run((editor) =>
+                editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+              )
+            }
+          >
+            <TableIcon size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <ToolIcon label="הוספת תמונה" disabled={!activeEditor} onClick={insertImage}>
+            <ImageIcon size={16} strokeWidth={2.25} />
+          </ToolIcon>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0] || null
+              void onImageSelected(file)
+              e.target.value = ''
+            }}
+          />
+        </div>
+
+        <span className="format-sep" aria-hidden="true" />
+
+        <div className="format-group format-group-labels" aria-label="קטע מסומן">
+          <ToolText label="הסבר" disabled={!activeEditor} onClick={() => void assist('explain')} />
+          <ToolText label="סיכום" disabled={!activeEditor} onClick={() => void assist('summarize')} />
+          <ToolText label="פישוט" disabled={!activeEditor} onClick={() => void assist('simplify')} />
+          <ToolText label="שאלות" disabled={!activeEditor} onClick={() => void assist('questions')} />
+        </div>
+
+        <span className="format-sep" aria-hidden="true" />
+
+        <div className="format-group format-group-labels" aria-label="תצוגת עמוד">
+          <ToolText
+            label="קווי סרגל"
+            active={ruled}
+            onClick={() => setRuled((value) => !value)}
+          />
+          <label className="format-text-btn format-swatch-label" title="צבע עמוד" onMouseDown={keepSelection}>
+            צבע עמוד
+            <input type="color" value={pageColor} onChange={(e) => setPageColor(e.target.value)} />
+          </label>
+          <div className="format-page-swatches">
+            {PAGE_COLORS.slice(0, 5).map((color) => (
+              <button
+                key={color}
+                type="button"
+                className={`format-page-swatch ${pageColor.toUpperCase() === color.toUpperCase() ? 'is-active' : ''}`}
+                style={{ background: color }}
+                title={color}
+                onMouseDown={keepSelection}
+                onClick={() => setPageColor(color)}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
@@ -310,8 +561,9 @@ export default function NotesEditor({
             <button
               type="button"
               className="btn btn-ghost btn-sm"
+              disabled={!activeEditor}
               onClick={() => {
-                editor.chain().focus().insertContent(`<p>${suggestion}</p>`).run()
+                run((editor) => editor.chain().focus().insertContent(`<p>${suggestion}</p>`).run())
                 setSuggestion('')
               }}
             >
@@ -321,23 +573,111 @@ export default function NotesEditor({
         </div>
       )}
 
-      <div className={`editor-scroll ${ruled ? 'ruled' : ''}`} style={pageStyle}>
-        <input
-          className="editor-title"
-          value={title}
-          onChange={(e) => onTitleChange(e.target.value)}
-          placeholder="שם העמוד"
-        />
-        <EditorContent editor={editor} />
+      <div className={`editor-scroll note-canvas ${ruled ? 'ruled' : ''}`} style={pageStyle} ref={canvasRef}>
+        <div
+          ref={surfaceRef}
+          className="note-canvas-surface"
+          style={{ minHeight: surfaceHeight }}
+          onMouseDown={onCanvasClick}
+        >
+          {doc.elements.length === 0 && (
+            <p className="note-canvas-hint">לחצי על מקום ריק בעמוד כדי להתחיל לכתוב</p>
+          )}
+          {doc.elements.map((element) => (
+            <NoteTextBox
+              key={element.id}
+              element={element}
+              active={activeId === element.id}
+              autofocus={focusId === element.id}
+              onActivate={activate}
+              onChangeContent={changeContent}
+              onChangeFrame={changeFrame}
+              onEditorReady={onEditorReady}
+              onEditorDestroy={onEditorDestroy}
+              onEmptyBlur={removeElement}
+            />
+          ))}
+        </div>
       </div>
     </div>
   )
 }
 
-function safeParse(json: string) {
-  try {
-    return JSON.parse(json)
-  } catch {
-    return { type: 'doc', content: [{ type: 'paragraph' }] }
-  }
+function keepSelection(event: ReactMouseEvent) {
+  event.preventDefault()
+}
+
+function ToolIcon({
+  label,
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string
+  active?: boolean
+  disabled?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      className={`format-icon ${active ? 'is-active' : ''}`}
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onMouseDown={keepSelection}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ToolText({
+  label,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string
+  active?: boolean
+  disabled?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className={`format-text-btn ${active ? 'is-active' : ''}`}
+      title={label}
+      disabled={disabled}
+      onMouseDown={keepSelection}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  )
+}
+
+function formatUpdatedAt(value?: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('he-IL', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('לא ניתן לקרוא את התמונה'))
+    reader.readAsDataURL(file)
+  })
 }
