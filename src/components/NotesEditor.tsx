@@ -27,15 +27,18 @@ import {
 import { ella } from '../lib/api'
 import { PAGE_COLORS } from '../lib/colors'
 import NoteTextBox from './NoteTextBox'
+import NoteImageBox from './NoteImageBox'
 import {
   canvasHeightFor,
+  createImageElement,
   createTextElement,
   DEFAULT_TEXT_WIDTH,
+  fitImageSize,
   nextZIndex,
   parsePageContent,
   serializeCanvas,
+  type CanvasElement,
   type CanvasPageDocument,
-  type CanvasTextElement,
   type TipTapDoc,
 } from '../lib/canvasDocument'
 import { FONT_FAMILIES, FONT_SIZES } from '../lib/tiptapExtensions'
@@ -66,6 +69,7 @@ export default function NotesEditor({
   const [highlightColor, setHighlightColor] = useState('#A5B5A0')
   const [suggestion, setSuggestion] = useState('')
   const [assistError, setAssistError] = useState('')
+  const [imageError, setImageError] = useState('')
   const [doc, setDoc] = useState<CanvasPageDocument>(() => parsePageContent(contentJson))
   const [activeId, setActiveId] = useState<string | null>(null)
   const [focusId, setFocusId] = useState<string | null>(null)
@@ -178,7 +182,10 @@ export default function NotesEditor({
   )
 
   const changeFrame = useCallback(
-    (id: string, frame: Partial<Pick<CanvasTextElement, 'x' | 'y' | 'width' | 'zIndex'>>) => {
+    (
+      id: string,
+      frame: Partial<Pick<CanvasElement, 'x' | 'y' | 'width' | 'zIndex'> & { height?: number }>,
+    ) => {
       suppressCreateRef.current = true
       window.setTimeout(() => {
         suppressCreateRef.current = false
@@ -186,7 +193,7 @@ export default function NotesEditor({
       updateDoc((prev) => ({
         ...prev,
         elements: prev.elements.map((element) =>
-          element.id === id ? { ...element, ...frame } : element,
+          element.id === id ? ({ ...element, ...frame } as CanvasElement) : element,
         ),
       }))
     },
@@ -195,6 +202,7 @@ export default function NotesEditor({
 
   const removeElement = useCallback(
     (id: string) => {
+      const target = docRef.current.elements.find((element) => element.id === id)
       updateDoc((prev) => ({
         ...prev,
         elements: prev.elements.filter((element) => element.id !== id),
@@ -202,9 +210,18 @@ export default function NotesEditor({
       setActiveId((current) => (current === id ? null : current))
       setFocusId((current) => (current === id ? null : current))
       editorsRef.current.delete(id)
+      if (target?.type === 'image') {
+        void ella()
+          .media.delete(target.mediaId)
+          .catch(() => undefined)
+      }
     },
     [updateDoc],
   )
+
+  const reportImageError = useCallback((message: string) => {
+    setImageError(message)
+  }, [])
 
   const createAt = useCallback(
     (x: number, y: number) => {
@@ -267,13 +284,50 @@ export default function NotesEditor({
   }
 
   const insertImage = () => {
+    setImageError('')
     imageInputRef.current?.click()
   }
 
   const onImageSelected = async (file: File | null) => {
-    if (!file || !activeEditor) return
-    const dataUrl = await readFileAsDataUrl(file)
-    run((editor) => editor.chain().focus().setImage({ src: dataUrl }).run())
+    if (!file) return
+    setImageError('')
+
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']
+    if (!allowed.includes(file.type.toLowerCase()) && !/\.(png|jpe?g|gif|webp)$/i.test(file.name)) {
+      setImageError('סוג הקובץ אינו נתמך. אפשר להעלות PNG, JPG, GIF או WEBP.')
+      return
+    }
+
+    try {
+      const bytes = await file.arrayBuffer()
+      const saved = await ella().media.save({
+        bytes,
+        mimeType: file.type || 'image/png',
+        name: file.name,
+      })
+      const natural = await readImageSize(bytes, saved.mimeType)
+      const size = fitImageSize(natural.width, natural.height)
+      const surface = surfaceRef.current
+      const canvas = canvasRef.current
+      const scrollTop = canvas?.scrollTop || 0
+      const element = createImageElement({
+        x: 64,
+        y: Math.max(48, scrollTop + 72),
+        width: size.width,
+        height: size.height,
+        zIndex: nextZIndex(docRef.current.elements),
+        mediaId: saved.id,
+        mimeType: saved.mimeType,
+      })
+      void surface
+      updateDoc((prev) => ({
+        ...prev,
+        elements: [...prev.elements, element],
+      }))
+      setActiveId(element.id)
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : 'לא ניתן להוסיף את התמונה')
+    }
   }
 
   const pageStyle = {
@@ -500,13 +554,13 @@ export default function NotesEditor({
           >
             <TableIcon size={16} strokeWidth={2.25} />
           </ToolIcon>
-          <ToolIcon label="הוספת תמונה" disabled={!activeEditor} onClick={insertImage}>
+          <ToolIcon label="הוספת תמונה" onClick={insertImage}>
             <ImageIcon size={16} strokeWidth={2.25} />
           </ToolIcon>
           <input
             ref={imageInputRef}
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0] || null
@@ -553,8 +607,9 @@ export default function NotesEditor({
         </div>
       </div>
 
-      {(suggestion || assistError) && (
+      {(suggestion || assistError || imageError) && (
         <div className="assist-panel">
+          {imageError && <p style={{ color: 'var(--danger)' }}>{imageError}</p>}
           {assistError && <p style={{ color: 'var(--danger)' }}>{assistError}</p>}
           {suggestion && <p>{suggestion}</p>}
           {suggestion && suggestion !== 'מעבדת…' && (
@@ -583,20 +638,32 @@ export default function NotesEditor({
           {doc.elements.length === 0 && (
             <p className="note-canvas-hint">לחצי על מקום ריק בעמוד כדי להתחיל לכתוב</p>
           )}
-          {doc.elements.map((element) => (
-            <NoteTextBox
-              key={element.id}
-              element={element}
-              active={activeId === element.id}
-              autofocus={focusId === element.id}
-              onActivate={activate}
-              onChangeContent={changeContent}
-              onChangeFrame={changeFrame}
-              onEditorReady={onEditorReady}
-              onEditorDestroy={onEditorDestroy}
-              onEmptyBlur={removeElement}
-            />
-          ))}
+          {doc.elements.map((element) =>
+            element.type === 'image' ? (
+              <NoteImageBox
+                key={element.id}
+                element={element}
+                active={activeId === element.id}
+                onActivate={activate}
+                onChangeFrame={changeFrame}
+                onDelete={removeElement}
+                onError={reportImageError}
+              />
+            ) : (
+              <NoteTextBox
+                key={element.id}
+                element={element}
+                active={activeId === element.id}
+                autofocus={focusId === element.id}
+                onActivate={activate}
+                onChangeContent={changeContent}
+                onChangeFrame={changeFrame}
+                onEditorReady={onEditorReady}
+                onEditorDestroy={onEditorDestroy}
+                onEmptyBlur={removeElement}
+              />
+            ),
+          )}
         </div>
       </div>
     </div>
@@ -673,11 +740,24 @@ function formatUpdatedAt(value?: string | null) {
   })
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
+function readImageSize(
+  bytes: ArrayBuffer,
+  mimeType: string,
+): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(reader.error || new Error('לא ניתן לקרוא את התמונה'))
-    reader.readAsDataURL(file)
+    const blob = new Blob([bytes], { type: mimeType || 'image/png' })
+    const url = URL.createObjectURL(blob)
+    const image = new Image()
+    image.onload = () => {
+      const width = image.naturalWidth || 1
+      const height = image.naturalHeight || 1
+      URL.revokeObjectURL(url)
+      resolve({ width, height })
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('הקובץ פגום או שאינו תמונה תקינה.'))
+    }
+    image.src = url
   })
 }

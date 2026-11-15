@@ -656,7 +656,11 @@ function plainFromTipTap(json: string): string {
     }
     if (doc.type === 'canvas' && Array.isArray(doc.elements)) {
       return doc.elements
-        .map((element) => (element.content ? plainFromNode(element.content) : ''))
+        .map((element) =>
+          element && (element as { type?: string }).type !== 'image' && element.content
+            ? plainFromNode(element.content)
+            : '',
+        )
         .join(' ')
     }
     return plainFromNode(doc)

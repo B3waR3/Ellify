@@ -1518,10 +1518,96 @@ a {
   margin-bottom: 0;
 }
 
-.note-box .ProseMirror img {
-  max-width: 100%;
-  height: auto;
+.note-image-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid transparent;
   border-radius: 4px;
+  overflow: visible;
+  user-select: none;
+}
+
+.note-image-box.is-active {
+  border-color: rgba(111, 128, 106, 0.65);
+  box-shadow: 0 0 0 1px rgba(165, 181, 160, 0.28);
+}
+
+.note-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 3px;
+  cursor: grab;
+  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.note-image:active {
+  cursor: grabbing;
+}
+
+.note-image-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: rgba(250, 248, 243, 0.9);
+  border-radius: 3px;
+}
+
+.note-image-delete {
+  position: absolute;
+  top: -0.55rem;
+  inset-inline-start: -0.55rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--danger);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 3;
+}
+
+.note-image-handle {
+  position: absolute;
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 1px solid var(--sage-deep);
+  border-radius: 2px;
+  background: #fff;
+  padding: 0;
+  z-index: 3;
+  cursor: nwse-resize;
+}
+
+.note-image-handle-se {
+  right: -0.35rem;
+  bottom: -0.35rem;
+}
+
+.note-image-handle-sw {
+  left: -0.35rem;
+  bottom: -0.35rem;
+  cursor: nesw-resize;
+}
+
+.note-image-handle-ne {
+  right: -0.35rem;
+  top: -0.35rem;
+  cursor: nesw-resize;
+}
+
+.note-image-handle-nw {
+  left: -0.35rem;
+  top: -0.35rem;
+  cursor: nwse-resize;
 }
 
 .tool-btn.is-disabled,

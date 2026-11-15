@@ -5,6 +5,7 @@ import * as secure from './secure'
 import * as files from './files'
 import * as ai from './ai'
 import { checkForUpdates } from './updates'
+import * as media from './media'
 import type { ConceptStatus, ExamConfig, McQuestion } from './types'
 
 let mainWindow: BrowserWindow | null = null
@@ -110,6 +111,20 @@ ipcMain.handle('pages:create', (_e, chapterId: string, title: string) =>
 ipcMain.handle('pages:update', (_e, id: string, data) => db.updatePage(id, data))
 ipcMain.handle('pages:delete', (_e, id: string) => {
   db.deletePage(id)
+  return true
+})
+
+// --- Media ---
+ipcMain.handle(
+  'media:save',
+  (_e, payload: { bytes: ArrayBuffer; mimeType: string; name?: string }) => {
+    const buffer = Buffer.from(payload.bytes)
+    return media.saveMedia(buffer, payload.mimeType, payload.name)
+  },
+)
+ipcMain.handle('media:read', (_e, id: string) => media.readMedia(id))
+ipcMain.handle('media:delete', (_e, id: string) => {
+  media.deleteMedia(id)
   return true
 })
 

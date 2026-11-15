@@ -38,10 +38,24 @@ export type CanvasTextElement = {
   content: TipTapDoc
 }
 
+export type CanvasImageElement = {
+  id: string
+  type: 'image'
+  x: number
+  y: number
+  width: number
+  height: number
+  zIndex: number
+  mediaId: string
+  mimeType: string
+}
+
+export type CanvasElement = CanvasTextElement | CanvasImageElement
+
 export type CanvasPageDocument = {
   version: 1
   type: 'canvas'
-  elements: CanvasTextElement[]
+  elements: CanvasElement[]
 }
 
 export type Flashcard = {

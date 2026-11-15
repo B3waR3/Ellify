@@ -6,7 +6,6 @@ import FontFamily from '@tiptap/extension-font-family'
 import Highlight from '@tiptap/extension-highlight'
 import TextAlign from '@tiptap/extension-text-align'
 import Placeholder from '@tiptap/extension-placeholder'
-import Image from '@tiptap/extension-image'
 import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableCell from '@tiptap/extension-table-cell'
@@ -78,7 +77,6 @@ export const NOTE_EDITOR_EXTENSIONS = [
     defaultAlignment: 'right',
   }),
   Placeholder.configure({ placeholder: 'התחילי לכתוב…' }),
-  Image.configure({ inline: false, allowBase64: true }),
   Table.configure({ resizable: true }),
   TableRow,
   TableHeader,

@@ -10,7 +10,10 @@ type Props = {
   autofocus?: boolean
   onActivate: (id: string) => void
   onChangeContent: (id: string, content: TipTapDoc) => void
-  onChangeFrame: (id: string, frame: Partial<Pick<CanvasTextElement, 'x' | 'y' | 'width' | 'zIndex'>>) => void
+  onChangeFrame: (
+    id: string,
+    frame: Partial<Pick<CanvasTextElement, 'x' | 'y' | 'width' | 'zIndex'> & { height?: number }>,
+  ) => void
   onEditorReady: (id: string, editor: Editor) => void
   onEditorDestroy: (id: string) => void
   onEmptyBlur: (id: string) => void

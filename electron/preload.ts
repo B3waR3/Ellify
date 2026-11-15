@@ -61,6 +61,17 @@ const api = {
     ): Promise<Page | null> => ipcRenderer.invoke('pages:update', id, data),
     delete: (id: string): Promise<boolean> => ipcRenderer.invoke('pages:delete', id),
   },
+  media: {
+    save: (payload: {
+      bytes: ArrayBuffer
+      mimeType: string
+      name?: string
+    }): Promise<{ id: string; mimeType: string; filename: string; size: number }> =>
+      ipcRenderer.invoke('media:save', payload),
+    read: (id: string): Promise<{ id: string; mimeType: string; bytes: Uint8Array }> =>
+      ipcRenderer.invoke('media:read', id),
+    delete: (id: string): Promise<boolean> => ipcRenderer.invoke('media:delete', id),
+  },
   flashcards: {
     list: (notebookId: string): Promise<Flashcard[]> =>
       ipcRenderer.invoke('flashcards:list', notebookId),
