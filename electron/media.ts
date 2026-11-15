@@ -3,8 +3,10 @@ import path from 'path'
 import { app } from 'electron'
 import { v4 as uuid } from 'uuid'
 
+/** Keep in sync with src/lib/mediaLimits.ts — renderer must reject before reading bytes. */
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'])
-const MAX_BYTES = 15 * 1024 * 1024
+export const MAX_MEDIA_BYTES = 15 * 1024 * 1024
+const MAX_BYTES = MAX_MEDIA_BYTES
 
 export type SavedMedia = {
   id: string

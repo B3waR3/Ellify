@@ -42,6 +42,7 @@ import {
   type TipTapDoc,
 } from '../lib/canvasDocument'
 import { FONT_FAMILIES, FONT_SIZES } from '../lib/tiptapExtensions'
+import { imageRejectionMessage, MAX_MEDIA_BYTES } from '../lib/mediaLimits'
 
 type AssistAction = 'explain' | 'summarize' | 'simplify' | 'expand' | 'questions'
 
@@ -70,6 +71,7 @@ export default function NotesEditor({
   const [suggestion, setSuggestion] = useState('')
   const [assistError, setAssistError] = useState('')
   const [imageError, setImageError] = useState('')
+  const [imageBusy, setImageBusy] = useState(false)
   const [doc, setDoc] = useState<CanvasPageDocument>(() => parsePageContent(contentJson))
   const [activeId, setActiveId] = useState<string | null>(null)
   const [focusId, setFocusId] = useState<string | null>(null)
@@ -284,6 +286,7 @@ export default function NotesEditor({
   }
 
   const insertImage = () => {
+    if (imageBusy) return
     setImageError('')
     imageInputRef.current?.click()
   }
@@ -292,14 +295,23 @@ export default function NotesEditor({
     if (!file) return
     setImageError('')
 
-    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']
-    if (!allowed.includes(file.type.toLowerCase()) && !/\.(png|jpe?g|gif|webp)$/i.test(file.name)) {
-      setImageError('סוג הקובץ אינו נתמך. אפשר להעלות PNG, JPG, GIF או WEBP.')
+    // Validate type and size before any decode, IPC, or canvas update.
+    // Reading oversized files into ArrayBuffer and cloning them over IPC
+    // was freezing the renderer even when saveMedia later rejected them.
+    const rejection = imageRejectionMessage(file)
+    if (rejection) {
+      setImageError(rejection)
       return
     }
 
+    setImageBusy(true)
     try {
       const bytes = await file.arrayBuffer()
+      if (bytes.byteLength > MAX_MEDIA_BYTES) {
+        setImageError('התמונה גדולה מדי (מעל 15MB).')
+        return
+      }
+
       const saved = await ella().media.save({
         bytes,
         mimeType: file.type || 'image/png',
@@ -307,7 +319,6 @@ export default function NotesEditor({
       })
       const natural = await readImageSize(bytes, saved.mimeType)
       const size = fitImageSize(natural.width, natural.height)
-      const surface = surfaceRef.current
       const canvas = canvasRef.current
       const scrollTop = canvas?.scrollTop || 0
       const element = createImageElement({
@@ -319,7 +330,6 @@ export default function NotesEditor({
         mediaId: saved.id,
         mimeType: saved.mimeType,
       })
-      void surface
       updateDoc((prev) => ({
         ...prev,
         elements: [...prev.elements, element],
@@ -327,6 +337,8 @@ export default function NotesEditor({
       setActiveId(element.id)
     } catch (error) {
       setImageError(error instanceof Error ? error.message : 'לא ניתן להוסיף את התמונה')
+    } finally {
+      setImageBusy(false)
     }
   }
 
@@ -554,7 +566,11 @@ export default function NotesEditor({
           >
             <TableIcon size={16} strokeWidth={2.25} />
           </ToolIcon>
-          <ToolIcon label="הוספת תמונה" onClick={insertImage}>
+          <ToolIcon
+            label={imageBusy ? 'מוסיפה תמונה…' : 'הוספת תמונה'}
+            disabled={imageBusy}
+            onClick={insertImage}
+          >
             <ImageIcon size={16} strokeWidth={2.25} />
           </ToolIcon>
           <input
@@ -564,8 +580,8 @@ export default function NotesEditor({
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0] || null
-              void onImageSelected(file)
               e.target.value = ''
+              void onImageSelected(file)
             }}
           />
         </div>
@@ -609,7 +625,18 @@ export default function NotesEditor({
 
       {(suggestion || assistError || imageError) && (
         <div className="assist-panel">
-          {imageError && <p style={{ color: 'var(--danger)' }}>{imageError}</p>}
+          {imageError && (
+            <div className="image-error-row">
+              <p style={{ color: 'var(--danger)', margin: 0 }}>{imageError}</p>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setImageError('')}
+              >
+                סגרי
+              </button>
+            </div>
+          )}
           {assistError && <p style={{ color: 'var(--danger)' }}>{assistError}</p>}
           {suggestion && <p>{suggestion}</p>}
           {suggestion && suggestion !== 'מעבדת…' && (

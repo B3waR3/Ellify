@@ -1284,6 +1284,13 @@ a {
   background: #fff;
 }
 
+.image-error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .ai-added {
   background: #e7ebe4;
   border-bottom: 2px solid var(--sage-deep);
